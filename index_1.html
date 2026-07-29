@@ -132,11 +132,14 @@ function seed(){
     save('guests',vahta);
     save('stays',[]);
     save('finance',[]);
-    save('users',[]);
+    save('users',[{name:'Заказчик · отчёт',login:'otchet',pass:'otchet',role:'factory'}]);
     save('seeded',true);
   }
 }
 seed();
+// гарантируем демо-доступ заказчика к отчёту даже на старых данных
+(function(){var us=load('users',[]);if(!us.some(function(u){return u.role==='factory';})){
+  us.push({name:'Заказчик · отчёт',login:'otchet',pass:'otchet',role:'factory'});save('users',us);}})();
 
 var ROOMS=28;
 function guests(){return load('guests',[]);}
@@ -174,6 +177,8 @@ function go(screen){
   if(screen==='staffAuth')return staffAuth();
   if(screen==='admin')return admin('rooms');
   if(screen==='guest')return guest(1,{});
+  if(screen==='factoryAuth')return factoryAuth();
+  if(screen==='factory')return factoryReport();
 }
 
 // ---------- landing ----------
@@ -187,6 +192,9 @@ function landing(){
   '<div class="big-choice" style="background:linear-gradient(135deg,#10b981,#059669)" onclick="go(\'guest\')">'+
     '<div class="ic">📱</div><div class="t">Регистрация гостя (QR)</div>'+
     '<div class="d">гость выбирает себя, комнату и период</div></div>'+
+  '<div class="big-choice" style="background:linear-gradient(135deg,#f59e0b,#d97706)" onclick="go(\'factoryAuth\')">'+
+    '<div class="ic">📊</div><div class="t">Вход для отчёта (заказчик)</div>'+
+    '<div class="d">руководство — просмотр посещений вахты (только чтение)</div></div>'+
   '<div class="card"><div class="small">Это демо для показа заказчику. Данные сохраняются в этом браузере/телефоне. '+
     'Позже подключим Google Таблицу как общую базу.</div>'+
     '<div class="link" style="margin-top:10px" onclick="resetAll()">Сбросить демо-данные</div></div>';
@@ -195,9 +203,8 @@ function resetAll(){if(confirm('Стереть все демо-данные и �
 
 // ---------- staff auth ----------
 function staffAuth(){
-  var us=users();
   setTop('вход для персонала','');
-  if(us.length===0){
+  if(!users().some(function(u){return u.role==='admin';})){
     C.innerHTML='<div class="card"><h2>Регистрация администратора</h2>'+
       '<div class="small">Первый пользователь становится админом отеля.</div>'+
       '<label>Ваше имя</label><input id="rName" placeholder="Напр. Азамат (ресепшн)">'+
@@ -225,8 +232,64 @@ function registerAdmin(){
 function doLogin(){
   var login=v('lLogin'),pass=v('lPass');
   var u=users().find(function(x){return x.login===login&&x.pass===pass;});
-  if(!u)return alert('Неверный логин или пароль');
+  if(!u||u.role==='factory')return alert('Неверный логин или пароль');
   save('session',{login:u.login,name:u.name,role:u.role});go('admin');
+}
+// ---------- factory (заказчик) report access ----------
+function factoryAuth(){
+  setTop('заказчик · отчёт','');TB.classList.add('hide');
+  C.innerHTML='<div class="card"><h2>🔒 Вход для отчёта</h2>'+
+    '<div class="small">Для руководства заказчика. Доступ — только просмотр отчёта о проживании (вахтовый метод).</div>'+
+    '<label>Логин</label><input id="fLogin" placeholder="otchet">'+
+    '<label>Пароль</label><input id="fPass" type="password" placeholder="•••">'+
+    '<button class="btn" onclick="factoryLogin()">Войти</button>'+
+    '<div class="small" style="margin-top:12px;background:var(--partbg);color:#92400e;padding:8px 10px;border-radius:8px">Демо-доступ для показа: логин <b>otchet</b> · пароль <b>otchet</b></div>'+
+    '<div class="link" style="text-align:center;margin-top:10px" onclick="go(\'landing\')">← назад</div></div>';
+}
+function factoryLogin(){
+  var login=v('fLogin'),pass=v('fPass');
+  var u=users().find(function(x){return x.login===login&&x.pass===pass&&x.role==='factory';});
+  if(!u)return alert('Неверный логин или пароль');
+  save('session',{login:u.login,name:u.name,role:'factory'});go('factory');
+}
+function factoryReport(){
+  var s=session();if(!s||s.role!=='factory')return go('factoryAuth');
+  setTop('заказчик · отчёт (только просмотр)','<span class="link" style="color:#fff" onclick="logout()">выйти</span>');
+  TB.classList.add('hide');
+  C.innerHTML='<div class="card noprint"><h2>Посещаемость вахты</h2>'+
+    '<div class="small">Только просмотр. Данные обновляются автоматически по регистрации гостей.</div>'+
+    '<label>Период с</label><input type="date" id="repFrom">'+
+    '<label>по</label><input type="date" id="repTo">'+
+    '<button class="btn" onclick="factoryRender()">Показать</button>'+
+    '<button class="btn sec" onclick="window.print()">🖨 Печать / PDF</button></div>'+
+    '<div id="repArea"></div>';
+  factoryRender();
+}
+function factoryRender(){
+  var from=v('repFrom'),to=v('repTo');
+  var rows=stays().slice().sort(function(a,b){return a.arrival<b.arrival?1:-1;});
+  if(from)rows=rows.filter(function(s){return s.arrival>=from;});
+  if(to)rows=rows.filter(function(s){return s.arrival<=to;});
+  var total=rows.reduce(function(a,s){var n=nights(s.arrival,s.departure);return a+(typeof n==='number'?n:0);},0);
+  var onshift=stays().filter(function(s){return s.status==='on_shift';}).length;
+  document.getElementById('repArea').innerHTML=
+    '<div class="card"><div class="tiles" style="margin-bottom:12px">'+
+    '<div class="tile" style="background:var(--freebg)"><div class="v" style="font-size:20px;color:#065f46">'+onshift+'</div><div class="l" style="color:#065f46">сейчас на смене</div></div>'+
+    '<div class="tile" style="background:var(--eef)"><div class="v" style="font-size:20px;color:var(--primd)">'+total+'</div><div class="l" style="color:var(--primd)">человеко-суток</div></div></div>'+
+    '<div style="font-weight:700;margin-bottom:6px">Отчёт о проживании (вахтовый метод)</div>'+
+    '<div class="small" style="margin-bottom:8px">Всего проживаний: '+rows.length+'</div>'+
+    '<div style="overflow:auto"><table><tr><th>ФИО</th><th>Комн.</th><th>Прибытие</th><th>Выбытие</th><th>Сут.</th><th>Статус</th></tr>'+
+    (rows.length?rows.map(function(s){
+      var stt=s.status==='closed'?'закрыт':(s.status==='booked'?'бронь':'на смене');
+      return '<tr><td>'+esc(s.fio)+'</td><td>№'+s.room+'</td><td>'+fmt(s.arrival)+'</td><td>'+fmt(s.departure)+'</td><td>'+nights(s.arrival,s.departure)+'</td><td>'+stt+'</td></tr>';
+    }).join(''):'<tr><td colspan="6" class="small">Нет данных за выбранный период.</td></tr>')+
+    '</table></div></div>';
+}
+function addFactoryUser(){
+  var login=prompt('Логин для заказчика (вход в отчёт):');if(!login)return;
+  var pass=prompt('Пароль:');if(!pass)return;
+  var us=users();us.push({name:'Заказчик · отчёт',login:login,pass:pass,role:'factory'});save('users',us);
+  alert('Готово. Заказчик может войти через «Вход для отчёта» с этим логином.');
 }
 function addStaff(){
   var name=prompt('Имя сотрудника (ресепшн):');if(!name)return;
@@ -322,6 +385,7 @@ function adminGuests(){
   C.innerHTML='<div class="card"><h2>Гости / вахта</h2>'+
     '<div class="small">Список сотрудников — его видит гость при регистрации по QR.</div>'+
     '<button class="btn row" style="margin-top:10px" onclick="addGuest()">+ Добавить сотрудника</button>'+
+    '<button class="btn row sec" style="margin-top:10px;margin-left:6px" onclick="addFactoryUser()">+ Доступ заказчику (отчёт)</button>'+
     '<div style="margin-top:12px">'+g.map(function(x){
       var inRoom=stays().find(function(s){return s.guestId===x.id&&s.status!=='closed';});
       return '<div class="list-item"><div class="avatar">'+initials(x.fio)+'</div>'+
@@ -483,7 +547,8 @@ document.getElementById('modalBg').addEventListener('click',function(e){if(e.tar
 
 // ---------- start ----------
 if(location.hash==='#guest')go('guest');
-else if(session())go('admin');
+else if(location.hash==='#report')go('factoryAuth');
+else if(session()){var _s=session();go(_s.role==='factory'?'factory':'admin');}
 else go('landing');
 </script>
 </body>
