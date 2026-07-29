@@ -102,7 +102,7 @@ td{padding:8px 6px;border-bottom:1px solid var(--line)}
   <div class="top">
     <div class="logo">🏨</div>
     <div>
-      <h1>Гостиница «Завод»</h1>
+      <h1>Гостиница</h1>
       <div class="sub" id="topSub">учёт гостей и финансов</div>
     </div>
     <div class="right"><span class="demo-badge">ДЕМО</span><div id="topRight" style="margin-top:4px"></div></div>
@@ -123,11 +123,11 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){mem[k
 function seed(){
   if(!load('seeded',false)){
     var vahta=[
-      {id:1,fio:'Ахметов Нурлан Серикулы',company:'Завод-Инжиниринг',phone:'+7 701 234 5678',tab:'1042'},
-      {id:2,fio:'Иванов Сергей Петрович',company:'Завод-Инжиниринг',phone:'+7 702 111 2233',tab:'1043'},
-      {id:3,fio:'Оспанов Данияр Болатұлы',company:'Завод-Инжиниринг',phone:'+7 705 987 6543',tab:'1044'},
-      {id:4,fio:'Ким Владимир Андреевич',company:'Завод-Инжиниринг',phone:'+7 700 555 4433',tab:'1045'},
-      {id:5,fio:'Ержанов Асхат Маратұлы',company:'Завод-Инжиниринг',phone:'+7 707 222 1100',tab:'1046'}
+      {id:1,fio:'Ахметов Нурлан Серикулы',company:'Инжиниринг',phone:'+7 701 234 5678'},
+      {id:2,fio:'Иванов Сергей Петрович',company:'Инжиниринг',phone:'+7 702 111 2233'},
+      {id:3,fio:'Оспанов Данияр Болатұлы',company:'Инжиниринг',phone:'+7 705 987 6543'},
+      {id:4,fio:'Ким Владимир Андреевич',company:'Инжиниринг',phone:'+7 700 555 4433'},
+      {id:5,fio:'Ержанов Асхат Маратұлы',company:'Инжиниринг',phone:'+7 707 222 1100'}
     ];
     save('guests',vahta);
     save('stays',[]);
@@ -280,22 +280,22 @@ function roomClick(n){
   if(r.st==='free'){
     openCheckin(n);
   }else{
-    var s=r.stay;var g=guests().find(function(x){return x.id===s.guestId;})||{fio:s.fio,company:'',phone:'',tab:''};
+    var s=r.stay;var g=guests().find(function(x){return x.id===s.guestId;})||{fio:s.fio,company:'',phone:''};
     var nn=nights(s.arrival,s.departure);
     modal('<h2>Комната № '+n+'</h2>'+
       '<div class="list-item"><div class="avatar">'+initials(g.fio)+'</div><div>'+
         '<div style="font-weight:700">'+esc(g.fio)+'</div>'+
-        '<div class="small">'+esc(g.company||'')+' · таб. '+esc(g.tab||'—')+'</div></div>'+
+        '<div class="small">'+esc(g.company||'')+(g.phone?' · '+esc(g.phone):'')+'</div></div>'+
         '<div style="margin-left:auto">'+(s.status==='booked'?'<span class="chip a">бронь</span>':'<span class="chip g">на смене</span>')+'</div></div>'+
       '<div class="tiles"><div class="tile" style="background:var(--freebg)"><div class="l" style="color:#065f46">Прибытие</div><div class="v" style="font-size:16px;color:#065f46">'+fmt(s.arrival)+'</div></div>'+
       '<div class="tile" style="background:var(--partbg)"><div class="l" style="color:#92400e">Выбытие</div><div class="v" style="font-size:16px;color:#92400e">'+fmt(s.departure)+'</div></div></div>'+
-      '<div class="small" style="margin:10px 0">Суток по плану: <b>'+nn+'</b> · источник: '+esc(s.source||'ресепшн')+'</div>'+
+      '<div class="small" style="margin:10px 0">Суток по плану: <b>'+nn+'</b> · вахтовый метод'+(s.source?' · '+esc(s.source==='qr'?'QR':s.source):'')+'</div>'+
       '<button class="btn red" onclick="checkout('+s.id+')">Отметить выбытие</button>'+
       '<button class="btn sec" onclick="closeModal()">Закрыть</button>');
   }
 }
 function openCheckin(n){
-  var opts=guests().map(function(g){return '<option value="'+g.id+'">'+esc(g.fio)+' ('+esc(g.tab||'')+')</option>';}).join('');
+  var opts=guests().map(function(g){return '<option value="'+g.id+'">'+esc(g.fio)+'</option>';}).join('');
   modal('<h2>Заселить · комната № '+n+'</h2>'+
     '<label>Гость</label><select id="ciGuest">'+opts+'</select>'+
     '<label>Прибытие</label><input type="date" id="ciArr">'+
@@ -326,15 +326,14 @@ function adminGuests(){
       var inRoom=stays().find(function(s){return s.guestId===x.id&&s.status!=='closed';});
       return '<div class="list-item"><div class="avatar">'+initials(x.fio)+'</div>'+
         '<div style="flex:1"><div style="font-weight:600">'+esc(x.fio)+'</div>'+
-        '<div class="small">'+esc(x.company||'')+' · '+esc(x.tab||'')+' · '+esc(x.phone||'')+'</div></div>'+
+        '<div class="small">'+esc(x.company||'')+(x.phone?' · '+esc(x.phone):'')+'</div></div>'+
         (inRoom?'<span class="chip g">№'+inRoom.room+'</span>':'<span class="chip m">нет</span>')+'</div>';
     }).join('')+'</div></div>';
 }
 function addGuest(){
   var fio=prompt('ФИО:');if(!fio)return;
-  var tab=prompt('Табельный номер:')||'';
   var phone=prompt('Телефон:')||'';
-  var g=guests();g.push({id:uid(),fio:fio,company:'Завод-Инжиниринг',phone:phone,tab:tab});save('guests',g);
+  var g=guests();g.push({id:uid(),fio:fio,company:'Инжиниринг',phone:phone});save('guests',g);
   admin('guests');
 }
 
@@ -381,17 +380,18 @@ function saveFin(){
 function adminRep(){
   var rows=stays().slice().sort(function(a,b){return (a.arrival<b.arrival)?1:-1;});
   var total=rows.reduce(function(a,s){var n=nights(s.arrival,s.departure);return a+(typeof n==='number'?n:0);},0);
-  C.innerHTML='<div class="card noprint"><h2>Отчёт для завода</h2>'+
-    '<div class="small">Проживания по периоду и по человеку. Кнопка ниже — печать/сохранение в PDF.</div>'+
+  C.innerHTML='<div class="card noprint"><h2>Отчёт (вахтовый метод)</h2>'+
+    '<div class="small">Проживание работников вахтовым методом — по периоду и по человеку. Кнопка ниже — печать/сохранение в PDF.</div>'+
     '<button class="btn row" style="margin-top:10px" onclick="window.print()">🖨 Печать / PDF</button></div>'+
-    '<div class="card"><div style="font-weight:700;margin-bottom:6px">Отчёт о проживании вахты</div>'+
+    '<div class="card"><div style="font-weight:700;margin-bottom:2px">Отчёт о проживании (вахтовый метод)</div>'+
     '<div class="small" style="margin-bottom:10px">Всего проживаний: '+rows.length+' · человеко-суток: '+total+'</div>'+
-    '<div style="overflow:auto"><table><tr><th>ФИО</th><th>Комн.</th><th>Прибытие</th><th>Выбытие</th><th>Сут.</th><th>Статус</th></tr>'+
+    '<div style="overflow:auto"><table><tr><th>ФИО</th><th>Комн.</th><th>Прибытие</th><th>Выбытие</th><th>Сут.</th><th>Метод</th><th>Статус</th></tr>'+
     (rows.length?rows.map(function(s){
       var stt=s.status==='closed'?'закрыт':(s.status==='booked'?'бронь':'на смене');
+      var method='вахта'+(s.source==='qr'?' · QR':(s.source==='ресепшн'?' · ресепшн':''));
       return '<tr><td>'+esc(s.fio)+'</td><td>№'+s.room+'</td><td>'+fmt(s.arrival)+'</td><td>'+fmt(s.departure)+'</td>'+
-        '<td>'+nights(s.arrival,s.departure)+'</td><td>'+stt+'</td></tr>';
-    }).join(''):'<tr><td colspan="6" class="small">Пока нет заселений. Заселите гостя или зарегистрируйте через QR.</td></tr>')+
+        '<td>'+nights(s.arrival,s.departure)+'</td><td>'+method+'</td><td>'+stt+'</td></tr>';
+    }).join(''):'<tr><td colspan="7" class="small">Пока нет заселений. Заселите гостя или зарегистрируйте через QR.</td></tr>')+
     '</table></div></div>';
 }
 
@@ -405,7 +405,7 @@ function guest(step,data){
       var busy=stays().find(function(s){return s.guestId===x.id&&s.status!=='closed';});
       return '<div class="list-item" style="cursor:pointer" onclick="guest(2,{gid:'+x.id+'})">'+
         '<div class="avatar">'+initials(x.fio)+'</div><div style="flex:1">'+
-        '<div style="font-weight:600">'+esc(x.fio)+'</div><div class="small">таб. '+esc(x.tab||'')+' · '+esc(x.company||'')+'</div></div>'+
+        '<div style="font-weight:600">'+esc(x.fio)+'</div><div class="small">'+esc(x.company||'')+(x.phone?' · '+esc(x.phone):'')+'</div></div>'+
         (busy?'<span class="chip g">в отеле</span>':'<span class="chip m">›</span>')+'</div>';
     }).join('');
     C.innerHTML='<div class="card">'+dots+'<h2>Найдите себя в списке</h2>'+
@@ -415,7 +415,6 @@ function guest(step,data){
   }else if(step===1.5){
     C.innerHTML='<div class="card"><h2>Меня нет в списке</h2>'+
       '<label>Фамилия Имя Отчество</label><input id="ngFio">'+
-      '<label>Табельный номер</label><input id="ngTab">'+
       '<label>Телефон</label><input id="ngPhone">'+
       '<button class="btn" onclick="addSelf()">Далее — выбрать комнату →</button>'+
       '<div class="link" style="text-align:center;margin-top:10px" onclick="guest(1,{})">← назад</div></div>';
@@ -457,7 +456,7 @@ function filterGuest(q){q=q.toLowerCase();
 function addSelf(){
   var fio=v('ngFio');if(!fio)return alert('Укажите ФИО');
   var g=guests();var id=uid();
-  g.push({id:id,fio:fio,company:'Завод-Инжиниринг',phone:v('ngPhone'),tab:v('ngTab')});save('guests',g);
+  g.push({id:id,fio:fio,company:'Инжиниринг',phone:v('ngPhone')});save('guests',g);
   guest(2,{gid:id});
 }
 function pickRoom(n){window._sel=n;
