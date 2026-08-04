@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MEDINA — регистрация гостя</title><link rel="stylesheet" href="styles.css">
+</head><body>
+<div class="wrap">
+  <div class="top"><div class="logo">📱</div>
+    <div><h1>MEDINA</h1><div class="sub">регистрация гостя</div></div>
+    <div class="right"><a class="link" style="color:#fff" href="index.html">на главную</a></div>
+  </div>
+  <div class="content" id="c"></div>
+</div>
+<div id="busy"><div class="sp"></div></div>
+<script src="config.js"></script>
+<script>
+var C=document.getElementById('c');
+var S={guests:[], gid:null, gfio:null, room:null};
+
+function dots(n){return '<div class="step-dots">'+[1,2,3].map(function(i){return '<i class="'+(i<=n?'on':'')+'"></i>';}).join('')+'</div>';}
+
+async function start(){
+  busy(true);
+  try{ S.guests=await api('guests'); }catch(e){ C.innerHTML='<div class="card">Нет связи с базой. Проверьте API_URL.</div>'; busy(false); return; }
+  busy(false); step1();
+}
+function step1(){
+  C.innerHTML='<div class="card">'+dots(1)+'<h2>Найдите себя в списке</h2>'+
+    '<input id="q" placeholder="🔎 поиск по фамилии" oninput="flt(this.value)">'+
+    '<div id="list" style="margin-top:10px">'+S.guests.map(function(g){
+      return '<div class="list-item" style="cursor:pointer" onclick="pickGuest(\''+g.id+'\')"><div class="avatar">'+initials(g['ФИО'])+'</div>'+
+        '<div style="flex:1"><div style="font-weight:600">'+esc(g['ФИО'])+'</div><div class="small">'+esc(g['Компания']||'')+'</div></div><span class="chip m">›</span></div>';
+    }).join('')+'</div>'+
+    '<div class="link" style="text-align:center;margin-top:6px" onclick="manual()">Меня нет в списке →</div></div>';
+}
+function flt(q){q=q.toLowerCase();Array.prototype.forEach.call(document.querySelectorAll('#list .list-item'),function(el){el.style.display=el.textContent.toLowerCase().indexOf(q)>=0?'':'none';});}
+function manual(){
+  C.innerHTML='<div class="card"><h2>Меня нет в списке</h2>'+
+    '<label>Фамилия Имя Отчество</label><input id="mf">'+
+    '<label>Телефон</label><input id="mp">'+
+    '<button class="btn" onclick="addSelf()">Далее — выбрать комнату →</button>'+
+    '<div class="link" style="text-align:center;margin-top:10px" onclick="step1()">← назад</div></div>';
+}
+async function addSelf(){
+  var fio=(document.getElementById('mf').value||'').trim(); if(!fio)return alert('Укажите ФИО');
+  busy(true); var r=await api('addGuest',{fio:fio,phone:(document.getElementById('mp').value||'')}); busy(false);
+  if(!r.ok)return alert('Ошибка'); S.gid=r.id; S.gfio=fio; step2();
+}
+function pickGuest(id){var g=S.guests.find(function(x){return String(x.id)===String(id);});S.gid=id;S.gfio=g['ФИО'];step2();}
+
+async function step2(){
+  busy(true); var fr=[]; try{ fr=await api('freeRooms'); }catch(e){} busy(false);
+  S._free=fr;
+  C.innerHTML='<div class="card">'+dots(2)+'<h2>Выберите комнату</h2>'+
+    '<div class="small">Свободных: '+fr.length+' из 28. Нажмите нужную.</div>'+
+    '<div class="freeroom-grid">'+fr.map(function(n){return '<div class="fr" id="fr'+n+'" onclick="pickRoom('+n+')">№ '+n+'</div>';}).join('')+'</div>'+
+    '<button class="btn" id="nx" style="opacity:.5" onclick="step3go()">Далее →</button></div>';
+}
+function pickRoom(n){S.room=n;Array.prototype.forEach.call(document.querySelectorAll('.fr'),function(e){e.classList.remove('sel');});document.getElementById('fr'+n).classList.add('sel');document.getElementById('nx').style.opacity='1';}
+function step3go(){if(!S.room)return alert('Выберите комнату');step3();}
+function step3(){
+  C.innerHTML='<div class="card">'+dots(3)+'<h2>Период проживания</h2>'+
+    '<div class="list-item"><div class="avatar">'+initials(S.gfio)+'</div><div><div style="font-weight:700">'+esc(S.gfio)+'</div><div class="small">Комната № '+S.room+'</div></div></div>'+
+    '<label>Прибытие</label><input type="date" id="a">'+
+    '<label>Выбытие</label><input type="date" id="b">'+
+    '<div id="nn" class="small" style="margin-top:8px"></div>'+
+    '<button class="btn green" onclick="confirmStay()">✓ Подтвердить заезд</button></div>';
+  document.getElementById('a').value=todayStr();
+  ['a','b'].forEach(function(id){document.getElementById(id).addEventListener('change',function(){
+    var n=nights(document.getElementById('a').value,document.getElementById('b').value);
+    document.getElementById('nn').innerHTML=n!==''?'Итого проживание: <b>'+n+' суток</b>':'';});});
+}
+async function confirmStay(){
+  var a=document.getElementById('a').value,b=document.getElementById('b').value;
+  if(!a||!b)return alert('Укажите период');
+  busy(true); var r=await api('checkin',{guestId:S.gid,fio:S.gfio,room:S.room,arrival:a,departure:b,source:'qr'}); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка. Возможно, комнату уже заняли — вернитесь и выберите другую.');
+  C.innerHTML='<div class="card" style="text-align:center"><div class="ok-circle"><div class="c">✓</div></div>'+
+    '<h2>Заезд оформлен!</h2><div class="small">Добро пожаловать</div></div>'+
+    '<div class="card"><table>'+
+    '<tr><td class="small">Комната</td><td style="text-align:right;font-weight:600">№ '+S.room+'</td></tr>'+
+    '<tr><td class="small">Период</td><td style="text-align:right;font-weight:600">'+fmt(a)+' – '+fmt(b)+'</td></tr>'+
+    '<tr><td class="small">Суток</td><td style="text-align:right;font-weight:600">'+nights(a,b)+'</td></tr>'+
+    '</table><button class="btn sec" onclick="location.href=\'index.html\'">Готово</button></div>';
+}
+start();
+</script>
+</body></html>
