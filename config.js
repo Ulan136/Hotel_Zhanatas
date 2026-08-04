@@ -1,7 +1,7 @@
 /* Общий конфиг и помощники для всех страниц MEDINA */
 
 /* ВСТАВЬТЕ СЮДА URL веб-приложения Apps Script (из «Развернуть → Веб-приложение») */
-var API_URL = "ВСТАВЬТЕ_СЮДА_URL_ВЕБ_ПРИЛОЖЕНИЯ";
+var API_URL = "https://script.google.com/macros/s/AKfycbyJau-CUHZlXnpBEvkWfmvzLADJ_-QHIYTGtIoWY6C8GFu0Ew-SfdD-A4BTG3bvwfy7iQ/exec";
 
 /* Запрос к API. Всё через GET с параметрами — так работает кросс-доменно с GitHub Pages. */
 async function api(action, params){
