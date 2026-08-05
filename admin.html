@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>MEDINA — кабинет</title><link rel="stylesheet" href="styles.css">
@@ -276,44 +276,41 @@ function fin_(){
     }).join(''):'<div class="small">Пока нет операций.</div>')+'</div>';
   var d=new Date();document.getElementById('ff').value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-01';document.getElementById('ft2').value=todayStr();
 }
+function topCats(t){return (DB.categories||[]).filter(function(c){return c['Тип']===t&&!(c['Родитель']&&String(c['Родитель']).length);});}
+function subCats(parentId){return (DB.categories||[]).filter(function(c){return String(c['Родитель']||'')===String(parentId);});}
 function addFin(){
   modal('<h2>Новая операция</h2><label>Тип</label><select id="ft" onchange="fillCats()"><option value="expense">Расход</option><option value="income">Доход</option></select>'+
-    '<label>Категория</label><select id="fc" onchange="onCatChange()"></select><input id="fcNew" placeholder="Название новой категории" style="display:none;margin-top:6px">'+
-    '<label>Подкатегория (вид)</label><select id="fsub" onchange="subToggle()"></select><input id="fsubNew" placeholder="Название новой подкатегории" style="display:none;margin-top:6px">'+
-    '<label>Сумма, ₸</label><input id="fa" type="number"><label>Дата</label><input id="fd" type="date"><label>Комментарий</label><input id="fn">'+
+    '<label>Категория</label><select id="fc" onchange="fillSubs()"></select>'+
+    '<label>Подкатегория (вид)</label><select id="fsub"></select>'+
+    '<label>Сумма, ₸</label><input id="fa" type="number" placeholder="0"><label>Дата</label><input id="fd" type="date"><label>Комментарий</label><input id="fn">'+
+    '<div id="fcHint" class="small" style="display:none;background:var(--partbg);color:#92400e;padding:8px 10px;border-radius:8px;margin-top:10px"></div>'+
     '<button class="btn" onclick="saveFin()">Сохранить</button><button class="btn sec" onclick="closeModal()">Отмена</button>');
   document.getElementById('fd').value=todayStr(); fillCats();
 }
-function topCats(t){return (DB.categories||[]).filter(function(c){return c['Тип']===t&&!(c['Родитель']&&String(c['Родитель']).length);});}
-function subCats(parentId){return (DB.categories||[]).filter(function(c){return String(c['Родитель']||'')===String(parentId);});}
 function fillCats(){
-  var t=document.getElementById('ft').value;
-  document.getElementById('fc').innerHTML=topCats(t).map(function(c){return '<option value="'+c.id+'">'+esc(c['Название'])+'</option>';}).join('')+'<option value="__new__">➕ Новая категория…</option>';
-  onCatChange();
-}
-function onCatChange(){
-  var sel=document.getElementById('fc').value;
-  document.getElementById('fcNew').style.display=(sel==='__new__')?'':'none';
+  var t=document.getElementById('ft').value, cats=topCats(t), sel=document.getElementById('fc'), hint=document.getElementById('fcHint');
+  if(!cats.length){
+    sel.innerHTML='<option value="">— нет категорий —</option>';
+    hint.style.display=''; hint.innerHTML='Нет категорий типа «'+(t==='expense'?'расход':'доход')+'». Сначала создайте их в ⚙ Настройки → Категории — здесь они появятся сами.';
+  }else{
+    sel.innerHTML=cats.map(function(c){return '<option value="'+c.id+'">'+esc(c['Название'])+'</option>';}).join('');
+    hint.style.display='none';
+  }
   fillSubs();
 }
 function fillSubs(){
-  var sel=document.getElementById('fc').value;
-  var subs=(sel&&sel!=='__new__')?subCats(sel):[];
-  document.getElementById('fsub').innerHTML='<option value="">— без подкатегории —</option>'+subs.map(function(c){return '<option>'+esc(c['Название'])+'</option>';}).join('')+'<option value="__new__">➕ Новая подкатегория…</option>';
-  subToggle();
+  var sel=document.getElementById('fc').value, subs=(sel)?subCats(sel):[];
+  document.getElementById('fsub').innerHTML='<option value="">— без подкатегории —</option>'+subs.map(function(c){return '<option>'+esc(c['Название'])+'</option>';}).join('');
 }
-function subToggle(){document.getElementById('fsubNew').style.display=(document.getElementById('fsub').value==='__new__')?'':'none';}
 async function saveFin(){
+  var catSel=document.getElementById('fc').value;
+  if(!catSel){ closeModal(); return settingsScreen('cats'); }
   var a=parseFloat(document.getElementById('fa').value); if(!a)return alert('Укажите сумму');
-  var t=document.getElementById('ft').value, catSel=document.getElementById('fc').value;
-  var catName, parentId;
+  var t=document.getElementById('ft').value;
+  var c=(DB.categories||[]).find(function(x){return String(x.id)===String(catSel);}); if(!c)return alert('Выберите категорию');
+  var subName=document.getElementById('fsub').value||'';
   busy(true);
-  if(catSel==='__new__'){ catName=v('fcNew'); if(!catName){busy(false);return alert('Укажите категорию');} var rc=await api('addCategory',{title:catName,ctype:t}); parentId=rc.id||''; }
-  else { var c=(DB.categories||[]).find(function(x){return String(x.id)===String(catSel);}); if(!c){busy(false);return alert('Выберите категорию');} catName=c['Название']; parentId=c.id; }
-  var subSel=document.getElementById('fsub').value, subName='';
-  if(subSel==='__new__'){ subName=v('fsubNew'); if(subName) await api('addCategory',{title:subName,ctype:t,parent:parentId}); }
-  else if(subSel) subName=subSel;
-  await api('addFinance',{type:t,category:catName,subcategory:subName,amount:a,date:document.getElementById('fd').value,note:v('fn')});
+  await api('addFinance',{type:t,category:c['Название'],subcategory:subName,amount:a,date:document.getElementById('fd').value,note:v('fn')});
   await reload(); busy(false); closeModal(); tab('fin');
 }
 function finReport(){
