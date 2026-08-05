@@ -132,11 +132,11 @@ function rowHtml(av,title,sub,editCall,delCall){
 async function settingsScreen(seg){
   SEG=seg||SEG||'guests';
   TB.style.display='none';
-  var segs=[['guests','Гости'],['staff','Работники']];
+  var segs=[['guests','Гости'],['staff','Работники'],['cats','Категории']];
   if(SESS.role==='admin') segs.unshift(['users','Пользователи']);
   if(SEG==='users'&&SESS.role!=='admin') SEG='guests';
-  var segBar='<div style="display:flex;gap:6px;margin-top:6px">'+segs.map(function(s){return '<button class="btn '+(SEG===s[0]?'':'sec')+'" style="flex:1;margin:0;padding:9px 4px;font-size:13px" onclick="settingsScreen(\''+s[0]+'\')">'+s[1]+'</button>';}).join('')+'</div>';
-  var head='<div class="card"><h2>⚙ Настройки</h2><div class="small">Пользователи — кто входит по логину; Гости — кто заселяется; Работники — персонал (повар, охрана, уборка…).</div>'+segBar+'</div>';
+  var segBar='<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">'+segs.map(function(s){return '<button class="btn '+(SEG===s[0]?'':'sec')+'" style="flex:1 1 30%;margin:0;padding:9px 4px;font-size:13px;min-width:84px" onclick="settingsScreen(\''+s[0]+'\')">'+s[1]+'</button>';}).join('')+'</div>';
+  var head='<div class="card"><h2>⚙ Настройки</h2><div class="small">Пользователи — доступ по логину; Гости — кто заселяется; Работники — персонал; Категории — статьи доходов и расходов.</div>'+segBar+'</div>';
   var list='';
   if(SEG==='users'){
     busy(true); var us=[]; try{us=await api('users');}catch(e){} busy(false); window._users=us;
@@ -145,10 +145,14 @@ async function settingsScreen(seg){
   }else if(SEG==='guests'){
     list='<div class="card"><button class="btn" onclick="guestModal()">+ Добавить гостя</button>'+
       (DB.guests.length?'<div style="margin-top:12px">'+DB.guests.map(function(x){var inr=DB.stays.find(function(s){return String(s.guestId)===String(x.id)&&s['Статус']!=='closed';});var idE=encodeURIComponent(String(x.id));return rowHtml(initials(x['ФИО']),x['ФИО'],esc(x['Компания']||'')+(x['Телефон']?' · '+esc(x['Телефон']):'')+(inr?' · <b style="color:#065f46">№'+inr['Комната']+'</b>':''),'guestModal(\''+idE+'\')','delGuest(\''+idE+'\')');}).join('')+'</div>':'<div class="small" style="margin-top:10px">Пока нет гостей.</div>')+'</div>';
-  }else{
+  }else if(SEG==='staff'){
     var st=DB.staff||[];
     list='<div class="card"><button class="btn" onclick="staffModal()">+ Добавить работника</button><div class="small" style="margin-top:8px">Работники с должностью «Охрана» видны на странице охраны (guard.html).</div>'+
       (st.length?'<div style="margin-top:12px">'+st.map(function(x){var idE=encodeURIComponent(String(x.id));return rowHtml(initials(x['ФИО']),x['ФИО'],esc(x['Должность']||'')+(x['Телефон']?' · '+esc(x['Телефон']):''),'staffModal(\''+idE+'\')','delStaff(\''+idE+'\')');}).join('')+'</div>':'<div class="small" style="margin-top:10px">Пока нет работников.</div>')+'</div>';
+  }else{
+    var cs=DB.categories||[];
+    list='<div class="card"><button class="btn" onclick="catModal()">+ Добавить категорию</button><div class="small" style="margin-top:8px">Статьи для кассы: доходы (напр. «Оплата вахты») и расходы (напр. «Продукты», «Коммуналка», «Зарплата»).</div>'+
+      (cs.length?'<div style="margin-top:12px">'+cs.map(function(c){var idE=encodeURIComponent(String(c.id));var ch=c['Тип']==='income'?'<span class="chip g">доход</span>':'<span class="chip a">расход</span>';return rowHtml('₸',c['Название'],ch,'catModal(\''+idE+'\')','delCat(\''+idE+'\')');}).join('')+'</div>':'<div class="small" style="margin-top:10px">Пока нет категорий. Добавьте свои статьи доходов и расходов.</div>')+'</div>';
   }
   C.innerHTML=head+list+'<div class="card"><button class="btn sec" onclick="tab(\'rooms\')">← назад в кабинет</button></div>';
 }
@@ -195,6 +199,25 @@ async function delStaff(idE){
   busy(true); var r=await api('deleteStaff',{id:decodeURIComponent(idE)}); await reload(); busy(false);
   if(!r.ok)return alert(r.error||'Ошибка'); settingsScreen('staff');
 }
+/* --- Категории доходов/расходов --- */
+function catModal(idE){
+  var edit=!!idE, c=edit?(DB.categories||[]).find(function(x){return encodeURIComponent(String(x.id))===idE;}):null;
+  modal('<h2>'+(edit?'Изменить категорию':'Новая категория')+'</h2>'+
+    '<label>Название</label><input id="kN" value="'+(c?esc(c['Название']):'')+'" placeholder="Напр. Продукты, Коммуналка, Оплата вахты">'+
+    '<label>Тип</label><select id="kT"><option value="expense"'+(c&&c['Тип']==='expense'?' selected':'')+'>Расход</option><option value="income"'+(c&&c['Тип']==='income'?' selected':'')+'>Доход</option></select>'+
+    '<button class="btn" onclick="saveCat('+(edit?'\''+idE+'\'':'null')+')">Сохранить</button><button class="btn sec" onclick="closeModal()">Отмена</button>');
+}
+async function saveCat(idE){
+  var t=v('kN'); if(!t)return alert('Укажите название');
+  var ct=document.getElementById('kT').value;
+  busy(true); var r=idE?await api('updateCategory',{id:decodeURIComponent(idE),title:t,ctype:ct}):await api('addCategory',{title:t,ctype:ct}); await reload(); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка'); closeModal(); settingsScreen('cats');
+}
+async function delCat(idE){
+  if(!confirm('Удалить категорию?'))return;
+  busy(true); var r=await api('deleteCategory',{id:decodeURIComponent(idE)}); await reload(); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка'); settingsScreen('cats');
+}
 /* --- Пользователи (доступ) --- */
 function userModal(loginEnc){
   var edit=!!loginEnc, u=edit?window._users.find(function(x){return encodeURIComponent(x.login)===loginEnc;}):null;
@@ -236,13 +259,28 @@ function fin_(){
     }).join(''):'<div class="small">Пока нет операций.</div>')+'</div>';
 }
 function addFin(){
-  modal('<h2>Новая операция</h2><label>Тип</label><select id="ft"><option value="income">Доход</option><option value="expense">Расход</option></select>'+
-    '<label>Категория</label><input id="fc" placeholder="Оплата вахты / Коммуналка"><label>Сумма, ₸</label><input id="fa" type="number"><label>Дата</label><input id="fd" type="date"><label>Комментарий</label><input id="fn">'+
+  modal('<h2>Новая операция</h2><label>Тип</label><select id="ft" onchange="fillCats()"><option value="expense">Расход</option><option value="income">Доход</option></select>'+
+    '<label>Категория</label><select id="fc" onchange="fcNewToggle()"></select><input id="fcNew" placeholder="Название новой категории" style="display:none;margin-top:6px">'+
+    '<label>Сумма, ₸</label><input id="fa" type="number"><label>Дата</label><input id="fd" type="date"><label>Комментарий</label><input id="fn">'+
     '<button class="btn" onclick="saveFin()">Сохранить</button><button class="btn sec" onclick="closeModal()">Отмена</button>');
-  document.getElementById('fd').value=todayStr();
+  document.getElementById('fd').value=todayStr(); fillCats();
 }
-async function saveFin(){var a=parseFloat(document.getElementById('fa').value);if(!a)return alert('Укажите сумму');
-  busy(true);await api('addFinance',{type:document.getElementById('ft').value,category:v('fc')||'Без категории',amount:a,date:document.getElementById('fd').value,note:v('fn')});await reload();busy(false);closeModal();tab('fin');}
+function fillCats(){
+  var t=document.getElementById('ft').value;
+  var cs=(DB.categories||[]).filter(function(c){return c['Тип']===t;});
+  document.getElementById('fc').innerHTML=cs.map(function(c){return '<option>'+esc(c['Название'])+'</option>';}).join('')+'<option value="__new__">➕ Новая категория…</option>';
+  fcNewToggle();
+}
+function fcNewToggle(){document.getElementById('fcNew').style.display=(document.getElementById('fc').value==='__new__')?'':'none';}
+async function saveFin(){
+  var a=parseFloat(document.getElementById('fa').value); if(!a)return alert('Укажите сумму');
+  var t=document.getElementById('ft').value, sel=document.getElementById('fc').value;
+  var cat=sel==='__new__'?v('fcNew'):sel; if(!cat)return alert('Укажите категорию');
+  busy(true);
+  if(sel==='__new__') await api('addCategory',{title:cat,ctype:t});
+  await api('addFinance',{type:t,category:cat,amount:a,date:document.getElementById('fd').value,note:v('fn')});
+  await reload(); busy(false); closeModal(); tab('fin');
+}
 
 /* --- Столовая --- */
 function canteen_(){
