@@ -68,15 +68,15 @@ async function addStaff(){
 async function openApp(){
   SESS=sess();
   document.getElementById('sub').textContent=SESS.name+' · '+(SESS.role==='admin'?'админ':'ресепшн');
-  document.getElementById('topRight').innerHTML=(SESS.role==='admin'?'<span class="link" style="color:#fff;margin-right:12px" onclick="usersScreen()">⚙ Доступ</span>':'')+'<span class="link" style="color:#fff" onclick="logout()">выйти</span>';
+  document.getElementById('topRight').innerHTML='<span class="link" style="color:#fff;margin-right:12px" onclick="settingsScreen()">⚙ Настройки</span><span class="link" style="color:#fff" onclick="logout()">выйти</span>';
   busy(true); try{await reload();}catch(e){C.innerHTML='<div class="card">Нет связи с базой.</div>';busy(false);return;} busy(false);
   tab('rooms');
 }
 function tab(t){
   TB.style.display='flex';
-  TB.innerHTML=[['rooms','▦','Комнаты'],['guests','👥','Гости'],['fin','₸','Финансы'],['canteen','🍽️','Столовая'],['shifts','🕒','Смены'],['rep','📄','Отчёт']]
+  TB.innerHTML=[['rooms','▦','Комнаты'],['fin','₸','Финансы'],['canteen','🍽️','Столовая'],['shifts','🕒','Смены'],['rep','📄','Отчёт']]
     .map(function(x){return '<button class="'+(t===x[0]?'active':'')+'" onclick="tab(\''+x[0]+'\')"><span class="ic">'+x[1]+'</span>'+x[2]+'</button>';}).join('');
-  ({rooms:rooms_,guests:guests_,fin:fin_,canteen:canteen_,shifts:shifts_,rep:rep_})[t]();
+  ({rooms:rooms_,fin:fin_,canteen:canteen_,shifts:shifts_,rep:rep_})[t]();
 }
 
 /* --- Комнаты --- */
@@ -122,20 +122,40 @@ async function doCheckin(n){
 }
 async function checkout(id){ busy(true); await api('checkout',{id:id}); await reload(); busy(false); closeModal(); tab('rooms'); }
 
-/* --- Работники (вахта): добавить / изменить / удалить --- */
-function guests_(){
-  C.innerHTML='<div class="card"><h2>Работники (вахта)</h2><div class="small">Ваши сотрудники. Этот список работник выбирает при QR-регистрации заезда.</div>'+
-    '<button class="btn" onclick="guestModal()">+ Добавить работника</button></div>'+
-    '<div class="card">'+(DB.guests.length?DB.guests.map(function(x){
-      var inr=DB.stays.find(function(s){return String(s.guestId)===String(x.id)&&s['Статус']!=='closed';});
-      var idE=encodeURIComponent(String(x.id));
-      return '<div class="list-item"><div class="avatar">'+initials(x['ФИО'])+'</div><div style="flex:1"><div style="font-weight:600">'+esc(x['ФИО'])+'</div><div class="small">'+esc(x['Компания']||'')+(x['Телефон']?' · '+esc(x['Телефон']):'')+(inr?' · <b style="color:#065f46">в комнате №'+inr['Комната']+'</b>':'')+'</div></div>'+
-        '<span class="link" onclick="guestModal(\''+idE+'\')">изм.</span>&nbsp;&nbsp;<span class="link" style="color:var(--full)" onclick="delGuest(\''+idE+'\')">удал.</span></div>';
-    }).join(''):'<div class="small">Пока нет работников. Нажмите «Добавить работника».</div>')+'</div>';
+/* ================= ЕДИНАЯ СТРАНИЦА «НАСТРОЙКИ» ================= */
+var SEG='guests', STAFF_ROLES=['Повар','Помощник повара','Ресепшн','Уборка','Охрана','Другое'];
+function roleChip(r){return r==='admin'?'<span class="chip" style="background:var(--eef);color:var(--primd)">Админ</span>':(r==='reception'?'<span class="chip g">Ресепшн</span>':'<span class="chip a">Заказчик</span>');}
+function rowHtml(av,title,sub,editCall,delCall){
+  return '<div class="list-item"><div class="avatar">'+av+'</div><div style="flex:1"><div style="font-weight:600">'+esc(title)+'</div><div class="small">'+sub+'</div></div>'+
+    '<span class="link" onclick="'+editCall+'">изм.</span>&nbsp;&nbsp;<span class="link" style="color:var(--full)" onclick="'+delCall+'">удал.</span></div>';
 }
+async function settingsScreen(seg){
+  SEG=seg||SEG||'guests';
+  TB.style.display='none';
+  var segs=[['guests','Гости'],['staff','Работники']];
+  if(SESS.role==='admin') segs.unshift(['users','Пользователи']);
+  if(SEG==='users'&&SESS.role!=='admin') SEG='guests';
+  var segBar='<div style="display:flex;gap:6px;margin-top:6px">'+segs.map(function(s){return '<button class="btn '+(SEG===s[0]?'':'sec')+'" style="flex:1;margin:0;padding:9px 4px;font-size:13px" onclick="settingsScreen(\''+s[0]+'\')">'+s[1]+'</button>';}).join('')+'</div>';
+  var head='<div class="card"><h2>⚙ Настройки</h2><div class="small">Пользователи — кто входит по логину; Гости — кто заселяется; Работники — персонал (повар, охрана, уборка…).</div>'+segBar+'</div>';
+  var list='';
+  if(SEG==='users'){
+    busy(true); var us=[]; try{us=await api('users');}catch(e){} busy(false); window._users=us;
+    list='<div class="card"><button class="btn" onclick="userModal()">+ Добавить пользователя</button>'+
+      (us.length?'<div style="margin-top:12px">'+us.map(function(u){return rowHtml(initials(u.name),u.name,esc(u.login)+' &nbsp; '+roleChip(u.role),'userModal(\''+encodeURIComponent(u.login)+'\')','delUser(\''+encodeURIComponent(u.login)+'\')');}).join('')+'</div>':'<div class="small" style="margin-top:10px">Пока нет пользователей.</div>')+'</div>';
+  }else if(SEG==='guests'){
+    list='<div class="card"><button class="btn" onclick="guestModal()">+ Добавить гостя</button>'+
+      (DB.guests.length?'<div style="margin-top:12px">'+DB.guests.map(function(x){var inr=DB.stays.find(function(s){return String(s.guestId)===String(x.id)&&s['Статус']!=='closed';});var idE=encodeURIComponent(String(x.id));return rowHtml(initials(x['ФИО']),x['ФИО'],esc(x['Компания']||'')+(x['Телефон']?' · '+esc(x['Телефон']):'')+(inr?' · <b style="color:#065f46">№'+inr['Комната']+'</b>':''),'guestModal(\''+idE+'\')','delGuest(\''+idE+'\')');}).join('')+'</div>':'<div class="small" style="margin-top:10px">Пока нет гостей.</div>')+'</div>';
+  }else{
+    var st=DB.staff||[];
+    list='<div class="card"><button class="btn" onclick="staffModal()">+ Добавить работника</button><div class="small" style="margin-top:8px">Работники с должностью «Охрана» видны на странице охраны (guard.html).</div>'+
+      (st.length?'<div style="margin-top:12px">'+st.map(function(x){var idE=encodeURIComponent(String(x.id));return rowHtml(initials(x['ФИО']),x['ФИО'],esc(x['Должность']||'')+(x['Телефон']?' · '+esc(x['Телефон']):''),'staffModal(\''+idE+'\')','delStaff(\''+idE+'\')');}).join('')+'</div>':'<div class="small" style="margin-top:10px">Пока нет работников.</div>')+'</div>';
+  }
+  C.innerHTML=head+list+'<div class="card"><button class="btn sec" onclick="tab(\'rooms\')">← назад в кабинет</button></div>';
+}
+/* --- Гости --- */
 function guestModal(idE){
   var edit=!!idE, g=edit?DB.guests.find(function(x){return encodeURIComponent(String(x.id))===idE;}):null;
-  modal('<h2>'+(edit?'Изменить работника':'Новый работник')+'</h2>'+
+  modal('<h2>'+(edit?'Изменить гостя':'Новый гость')+'</h2>'+
     '<label>ФИО</label><input id="gN" value="'+(g?esc(g['ФИО']):'')+'">'+
     '<label>Компания / вахта</label><input id="gC" value="'+(g?esc(g['Компания']||''):'Инжиниринг')+'">'+
     '<label>Телефон</label><input id="gP" value="'+(g?esc(g['Телефон']||''):'')+'">'+
@@ -145,29 +165,37 @@ function guestModal(idE){
 async function saveGuest(idE){
   var fio=v('gN'); if(!fio)return alert('Укажите ФИО');
   busy(true); var r=idE?await api('updateGuest',{id:decodeURIComponent(idE),fio:fio,company:v('gC'),phone:v('gP')}):await api('addGuest',{fio:fio,company:v('gC'),phone:v('gP')}); await reload(); busy(false);
-  if(!r.ok)return alert(r.error||'Ошибка'); closeModal(); tab('guests');
+  if(!r.ok)return alert(r.error||'Ошибка'); closeModal(); settingsScreen('guests');
 }
 async function delGuest(idE){
   var g=DB.guests.find(function(x){return encodeURIComponent(String(x.id))===idE;});
-  if(g){var inr=DB.stays.find(function(s){return String(s.guestId)===String(g.id)&&s['Статус']!=='closed';}); if(inr)return alert('Нельзя удалить: работник сейчас заселён (комната №'+inr['Комната']+'). Сначала отметьте выбытие.');}
-  if(!confirm('Удалить работника?'))return;
+  if(g){var inr=DB.stays.find(function(s){return String(s.guestId)===String(g.id)&&s['Статус']!=='closed';}); if(inr)return alert('Нельзя удалить: гость сейчас заселён (комната №'+inr['Комната']+'). Сначала отметьте выбытие.');}
+  if(!confirm('Удалить гостя?'))return;
   busy(true); var r=await api('deleteGuest',{id:decodeURIComponent(idE)}); await reload(); busy(false);
-  if(!r.ok)return alert(r.error||'Ошибка'); tab('guests');
+  if(!r.ok)return alert(r.error||'Ошибка'); settingsScreen('guests');
 }
-/* --- Пользователи и доступы (только админ) --- */
-function roleChip(r){return r==='admin'?'<span class="chip" style="background:var(--eef);color:var(--primd)">Админ</span>':(r==='reception'?'<span class="chip g">Ресепшн</span>':'<span class="chip a">Заказчик</span>');}
-async function usersScreen(){
-  TB.style.display='none';
-  busy(true); var us=[]; try{us=await api('users');}catch(e){} busy(false);
-  window._users=us;
-  C.innerHTML='<div class="card"><h2>Пользователи и доступы</h2><div class="small">Кто может входить: админ и ресепшн — в кабинет; заказчик — только отчёт.</div>'+
-    '<button class="btn" onclick="userModal()">+ Добавить пользователя</button></div>'+
-    '<div class="card">'+(us.length?us.map(function(u){
-      return '<div class="list-item"><div class="avatar">'+initials(u.name)+'</div><div style="flex:1"><div style="font-weight:600">'+esc(u.name)+'</div><div class="small">'+esc(u.login)+' &nbsp; '+roleChip(u.role)+'</div></div>'+
-        '<span class="link" onclick="userModal(\''+encodeURIComponent(u.login)+'\')">изм.</span>&nbsp;&nbsp;<span class="link" style="color:var(--full)" onclick="delUser(\''+encodeURIComponent(u.login)+'\')">удал.</span></div>';
-    }).join(''):'<div class="small">Пока нет пользователей.</div>')+'</div>'+
-    '<div class="card"><button class="btn sec" onclick="tab(\'rooms\')">← назад в кабинет</button></div>';
+/* --- Работники (персонал) --- */
+function staffModal(idE){
+  var edit=!!idE, w=edit?(DB.staff||[]).find(function(x){return encodeURIComponent(String(x.id))===idE;}):null;
+  modal('<h2>'+(edit?'Изменить работника':'Новый работник')+'</h2>'+
+    '<label>ФИО</label><input id="wN" value="'+(w?esc(w['ФИО']):'')+'">'+
+    '<label>Должность</label><select id="wR">'+STAFF_ROLES.map(function(r){return '<option'+(w&&w['Должность']===r?' selected':'')+'>'+r+'</option>';}).join('')+'</select>'+
+    '<label>Телефон</label><input id="wP" value="'+(w?esc(w['Телефон']||''):'')+'">'+
+    '<button class="btn" onclick="saveStaff('+(edit?'\''+idE+'\'':'null')+')">Сохранить</button>'+
+    '<button class="btn sec" onclick="closeModal()">Отмена</button>');
 }
+async function saveStaff(idE){
+  var fio=v('wN'); if(!fio)return alert('Укажите ФИО');
+  var role=document.getElementById('wR').value, phone=v('wP');
+  busy(true); var r=idE?await api('updateStaff',{id:decodeURIComponent(idE),fio:fio,role:role,phone:phone}):await api('addStaff',{fio:fio,role:role,phone:phone}); await reload(); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка'); closeModal(); settingsScreen('staff');
+}
+async function delStaff(idE){
+  if(!confirm('Удалить работника?'))return;
+  busy(true); var r=await api('deleteStaff',{id:decodeURIComponent(idE)}); await reload(); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка'); settingsScreen('staff');
+}
+/* --- Пользователи (доступ) --- */
 function userModal(loginEnc){
   var edit=!!loginEnc, u=edit?window._users.find(function(x){return encodeURIComponent(x.login)===loginEnc;}):null;
   modal('<h2>'+(edit?'Изменить пользователя':'Новый пользователь')+'</h2>'+
@@ -183,14 +211,14 @@ async function saveUser(edit){
   if(!name||!login)return alert('Имя и логин обязательны');
   if(!edit&&!pass)return alert('Укажите пароль для нового пользователя');
   busy(true); var r=edit?await api('updateUser',{login:login,name:name,role:role,pass:pass}):await api('addUser',{name:name,login:login,pass:pass,role:role}); busy(false);
-  if(!r.ok)return alert(r.error||'Ошибка'); closeModal(); usersScreen();
+  if(!r.ok)return alert(r.error||'Ошибка'); closeModal(); settingsScreen('users');
 }
 async function delUser(loginEnc){
   var login=decodeURIComponent(loginEnc);
   if(login===SESS.login)return alert('Нельзя удалить пользователя, под которым вы вошли.');
   if(!confirm('Удалить пользователя «'+login+'»?'))return;
   busy(true); var r=await api('deleteUser',{login:login}); busy(false);
-  if(!r.ok)return alert(r.error||'Ошибка'); usersScreen();
+  if(!r.ok)return alert(r.error||'Ошибка'); settingsScreen('users');
 }
 
 /* --- Финансы --- */
@@ -260,7 +288,7 @@ function shifts_(){
   C.innerHTML='<div class="card"><h2>Смены персонала</h2><div class="small">Охрана отмечает приход/уход по QR — часы считаются автоматически.</div>'+
     '<div class="tiles" style="margin-top:10px"><div class="tile" style="background:var(--eef)"><div class="v" style="font-size:18px;color:var(--primd)">'+sh.length+'</div><div class="l" style="color:var(--primd)">смен</div></div>'+
     '<div class="tile" style="background:var(--freebg)"><div class="v" style="font-size:18px;color:#065f46">'+hours+'</div><div class="l" style="color:#065f46">часов</div></div></div>'+
-    '<button class="btn" onclick="addSh()">+ Добавить смену</button><button class="btn sec" onclick="mGuards()">Охранники</button></div>'+
+    '<button class="btn" onclick="addSh()">+ Добавить смену</button><div class="small" style="margin-top:8px">Охранников заводите в «⚙ Настройки → Работники» (должность «Охрана»).</div></div>'+
     '<div class="card noprint"><h2 style="font-size:15px">Табель за период</h2><label>с</label><input type="date" id="tf"><label>по</label><input type="date" id="tt">'+
     '<button class="btn" onclick="tabel()">Показать табель</button><button class="btn sec" onclick="window.print()">🖨 Печать</button></div><div id="tRep"></div>'+
     '<div class="card"><h2 style="font-size:15px">График смен</h2>'+(sh.length?'<div style="overflow:auto"><table><tr><th>Дата</th><th>Сотрудник</th><th>Должн.</th><th>Смена</th><th>Ч</th><th>Подтв.</th></tr>'+
@@ -284,11 +312,6 @@ function addSh(){
   document.getElementById('sd').value=todayStr();
 }
 async function saveSh(){if(!v('sn'))return alert('Укажите сотрудника');busy(true);await api('addShift',{name:v('sn'),role:document.getElementById('sr').value,date:document.getElementById('sd').value,shift:document.getElementById('st').value,hours:parseFloat(document.getElementById('shh').value)||0});await reload();busy(false);closeModal();tab('shifts');}
-function mGuards(){
-  modal('<h2>Охранники</h2><div class="small">Их видят на странице guard.html.</div><div style="margin:12px 0">'+(DB.guards.length?DB.guards.map(function(n){return '<div class="list-item"><div class="avatar">'+initials(n)+'</div><div style="flex:1;font-weight:600">'+esc(n)+'</div></div>';}).join(''):'<div class="small">Нет охранников.</div>')+'</div>'+
-    '<button class="btn" onclick="addGuard()">+ Добавить охранника</button><button class="btn sec" onclick="closeModal()">Закрыть</button>');
-}
-async function addGuard(){var n=prompt('ФИО охранника:');if(!n)return;busy(true);await api('addGuard',{name:n});await reload();busy(false);mGuards();}
 
 /* --- Отчёт --- */
 function rep_(){
