@@ -68,7 +68,7 @@ async function addStaff(){
 async function openApp(){
   SESS=sess();
   document.getElementById('sub').textContent=SESS.name+' · '+(SESS.role==='admin'?'админ':'ресепшн');
-  document.getElementById('topRight').innerHTML='<span class="link" style="color:#fff" onclick="logout()">выйти</span>';
+  document.getElementById('topRight').innerHTML=(SESS.role==='admin'?'<span class="link" style="color:#fff;margin-right:12px" onclick="usersScreen()">⚙ Доступ</span>':'')+'<span class="link" style="color:#fff" onclick="logout()">выйти</span>';
   busy(true); try{await reload();}catch(e){C.innerHTML='<div class="card">Нет связи с базой.</div>';busy(false);return;} busy(false);
   tab('rooms');
 }
@@ -126,14 +126,50 @@ async function checkout(id){ busy(true); await api('checkout',{id:id}); await re
 function guests_(){
   C.innerHTML='<div class="card"><h2>Гости / вахта</h2><div class="small">Список, который видит гость при QR-регистрации.</div>'+
     '<button class="btn row" style="margin-top:10px" onclick="addGuest()">+ Добавить сотрудника</button>'+
-    '<button class="btn row sec" style="margin-top:10px;margin-left:6px" onclick="addFactory()">+ Доступ заказчику</button>'+
     '<div style="margin-top:12px">'+DB.guests.map(function(x){
       var inr=DB.stays.find(function(s){return String(s.guestId)===String(x.id)&&s['Статус']!=='closed';});
       return '<div class="list-item"><div class="avatar">'+initials(x['ФИО'])+'</div><div style="flex:1"><div style="font-weight:600">'+esc(x['ФИО'])+'</div><div class="small">'+esc(x['Компания']||'')+(x['Телефон']?' · '+esc(x['Телефон']):'')+'</div></div>'+(inr?'<span class="chip g">№'+inr['Комната']+'</span>':'<span class="chip m">нет</span>')+'</div>';
     }).join('')+'</div></div>';
 }
 async function addGuest(){var f=prompt('ФИО:');if(!f)return;var p=prompt('Телефон:')||'';busy(true);await api('addGuest',{fio:f,phone:p});await reload();busy(false);tab('guests');}
-async function addFactory(){var l=prompt('Логин для заказчика:');if(!l)return;var p=prompt('Пароль:');if(!p)return;busy(true);var r=await api('register',{name:'Заказчик · отчёт',login:l,pass:p,role:'factory'});busy(false);alert(r.ok?'Готово. Заказчик войдёт на report.html':(r.error||'Ошибка'));}
+/* --- Пользователи и доступы (только админ) --- */
+function roleChip(r){return r==='admin'?'<span class="chip" style="background:var(--eef);color:var(--primd)">Админ</span>':(r==='reception'?'<span class="chip g">Ресепшн</span>':'<span class="chip a">Заказчик</span>');}
+async function usersScreen(){
+  TB.style.display='none';
+  busy(true); var us=[]; try{us=await api('users');}catch(e){} busy(false);
+  window._users=us;
+  C.innerHTML='<div class="card"><h2>Пользователи и доступы</h2><div class="small">Кто может входить: админ и ресепшн — в кабинет; заказчик — только отчёт.</div>'+
+    '<button class="btn" onclick="userModal()">+ Добавить пользователя</button></div>'+
+    '<div class="card">'+(us.length?us.map(function(u){
+      return '<div class="list-item"><div class="avatar">'+initials(u.name)+'</div><div style="flex:1"><div style="font-weight:600">'+esc(u.name)+'</div><div class="small">'+esc(u.login)+' &nbsp; '+roleChip(u.role)+'</div></div>'+
+        '<span class="link" onclick="userModal(\''+encodeURIComponent(u.login)+'\')">изм.</span>&nbsp;&nbsp;<span class="link" style="color:var(--full)" onclick="delUser(\''+encodeURIComponent(u.login)+'\')">удал.</span></div>';
+    }).join(''):'<div class="small">Пока нет пользователей.</div>')+'</div>'+
+    '<div class="card"><button class="btn sec" onclick="tab(\'rooms\')">← назад в кабинет</button></div>';
+}
+function userModal(loginEnc){
+  var edit=!!loginEnc, u=edit?window._users.find(function(x){return encodeURIComponent(x.login)===loginEnc;}):null;
+  modal('<h2>'+(edit?'Изменить пользователя':'Новый пользователь')+'</h2>'+
+    '<label>Имя</label><input id="uName" value="'+(u?esc(u.name):'')+'">'+
+    '<label>Логин</label><input id="uLogin" value="'+(u?esc(u.login):'')+'"'+(edit?' readonly style="background:#eef2ff;color:#64748b"':'')+'>'+
+    '<label>Пароль'+(edit?' (пусто — не менять)':'')+'</label><input id="uPass" type="text">'+
+    '<label>Роль</label><select id="uRole"><option value="admin">Админ (полный доступ)</option><option value="reception">Ресепшн</option><option value="factory">Заказчик (только отчёт)</option></select>'+
+    '<button class="btn" onclick="saveUser('+(edit?'true':'false')+')">Сохранить</button><button class="btn sec" onclick="closeModal()">Отмена</button>');
+  if(u) document.getElementById('uRole').value=u.role;
+}
+async function saveUser(edit){
+  var name=v('uName'), login=v('uLogin'), pass=v('uPass'), role=document.getElementById('uRole').value;
+  if(!name||!login)return alert('Имя и логин обязательны');
+  if(!edit&&!pass)return alert('Укажите пароль для нового пользователя');
+  busy(true); var r=edit?await api('updateUser',{login:login,name:name,role:role,pass:pass}):await api('addUser',{name:name,login:login,pass:pass,role:role}); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка'); closeModal(); usersScreen();
+}
+async function delUser(loginEnc){
+  var login=decodeURIComponent(loginEnc);
+  if(login===SESS.login)return alert('Нельзя удалить пользователя, под которым вы вошли.');
+  if(!confirm('Удалить пользователя «'+login+'»?'))return;
+  busy(true); var r=await api('deleteUser',{login:login}); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка'); usersScreen();
+}
 
 /* --- Финансы --- */
 function fin_(){
