@@ -122,16 +122,38 @@ async function doCheckin(n){
 }
 async function checkout(id){ busy(true); await api('checkout',{id:id}); await reload(); busy(false); closeModal(); tab('rooms'); }
 
-/* --- Гости --- */
+/* --- Работники (вахта): добавить / изменить / удалить --- */
 function guests_(){
-  C.innerHTML='<div class="card"><h2>Гости / вахта</h2><div class="small">Список, который видит гость при QR-регистрации.</div>'+
-    '<button class="btn row" style="margin-top:10px" onclick="addGuest()">+ Добавить сотрудника</button>'+
-    '<div style="margin-top:12px">'+DB.guests.map(function(x){
+  C.innerHTML='<div class="card"><h2>Работники (вахта)</h2><div class="small">Ваши сотрудники. Этот список работник выбирает при QR-регистрации заезда.</div>'+
+    '<button class="btn" onclick="guestModal()">+ Добавить работника</button></div>'+
+    '<div class="card">'+(DB.guests.length?DB.guests.map(function(x){
       var inr=DB.stays.find(function(s){return String(s.guestId)===String(x.id)&&s['Статус']!=='closed';});
-      return '<div class="list-item"><div class="avatar">'+initials(x['ФИО'])+'</div><div style="flex:1"><div style="font-weight:600">'+esc(x['ФИО'])+'</div><div class="small">'+esc(x['Компания']||'')+(x['Телефон']?' · '+esc(x['Телефон']):'')+'</div></div>'+(inr?'<span class="chip g">№'+inr['Комната']+'</span>':'<span class="chip m">нет</span>')+'</div>';
-    }).join('')+'</div></div>';
+      var idE=encodeURIComponent(String(x.id));
+      return '<div class="list-item"><div class="avatar">'+initials(x['ФИО'])+'</div><div style="flex:1"><div style="font-weight:600">'+esc(x['ФИО'])+'</div><div class="small">'+esc(x['Компания']||'')+(x['Телефон']?' · '+esc(x['Телефон']):'')+(inr?' · <b style="color:#065f46">в комнате №'+inr['Комната']+'</b>':'')+'</div></div>'+
+        '<span class="link" onclick="guestModal(\''+idE+'\')">изм.</span>&nbsp;&nbsp;<span class="link" style="color:var(--full)" onclick="delGuest(\''+idE+'\')">удал.</span></div>';
+    }).join(''):'<div class="small">Пока нет работников. Нажмите «Добавить работника».</div>')+'</div>';
 }
-async function addGuest(){var f=prompt('ФИО:');if(!f)return;var p=prompt('Телефон:')||'';busy(true);await api('addGuest',{fio:f,phone:p});await reload();busy(false);tab('guests');}
+function guestModal(idE){
+  var edit=!!idE, g=edit?DB.guests.find(function(x){return encodeURIComponent(String(x.id))===idE;}):null;
+  modal('<h2>'+(edit?'Изменить работника':'Новый работник')+'</h2>'+
+    '<label>ФИО</label><input id="gN" value="'+(g?esc(g['ФИО']):'')+'">'+
+    '<label>Компания / вахта</label><input id="gC" value="'+(g?esc(g['Компания']||''):'Инжиниринг')+'">'+
+    '<label>Телефон</label><input id="gP" value="'+(g?esc(g['Телефон']||''):'')+'">'+
+    '<button class="btn" onclick="saveGuest('+(edit?'\''+idE+'\'':'null')+')">Сохранить</button>'+
+    '<button class="btn sec" onclick="closeModal()">Отмена</button>');
+}
+async function saveGuest(idE){
+  var fio=v('gN'); if(!fio)return alert('Укажите ФИО');
+  busy(true); var r=idE?await api('updateGuest',{id:decodeURIComponent(idE),fio:fio,company:v('gC'),phone:v('gP')}):await api('addGuest',{fio:fio,company:v('gC'),phone:v('gP')}); await reload(); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка'); closeModal(); tab('guests');
+}
+async function delGuest(idE){
+  var g=DB.guests.find(function(x){return encodeURIComponent(String(x.id))===idE;});
+  if(g){var inr=DB.stays.find(function(s){return String(s.guestId)===String(g.id)&&s['Статус']!=='closed';}); if(inr)return alert('Нельзя удалить: работник сейчас заселён (комната №'+inr['Комната']+'). Сначала отметьте выбытие.');}
+  if(!confirm('Удалить работника?'))return;
+  busy(true); var r=await api('deleteGuest',{id:decodeURIComponent(idE)}); await reload(); busy(false);
+  if(!r.ok)return alert(r.error||'Ошибка'); tab('guests');
+}
 /* --- Пользователи и доступы (только админ) --- */
 function roleChip(r){return r==='admin'?'<span class="chip" style="background:var(--eef);color:var(--primd)">Админ</span>':(r==='reception'?'<span class="chip g">Ресепшн</span>':'<span class="chip a">Заказчик</span>');}
 async function usersScreen(){
