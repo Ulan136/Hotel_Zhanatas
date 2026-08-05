@@ -9,6 +9,21 @@ const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff
 const topCats = (cats, t) => cats.filter((c) => c.type === t && !c.parent);
 const subCats = (cats, pid) => cats.filter((c) => String(c.parent || '') === String(pid));
 
+const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+function monthName(m) { const [y, mm] = m.split('-'); return (MONTHS[+mm - 1] || mm) + ' ' + y; }
+
+// --- Экспорт в Excel (CSV) ---
+function csvCell(v) { v = String(v == null ? '' : v); return /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+function downloadCSV(filename, rows) {
+  const csv = rows.map((r) => r.map(csvCell).join(';')).join('\r\n');
+  // BOM (﻿) — чтобы Excel правильно открыл кириллицу в UTF-8.
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
 export default function AdminPage() {
   const [sess, setSess] = useState(null);
   const [view, setView] = useState('boot');        // boot | reg | login | app
@@ -315,6 +330,32 @@ function FinTab({ db, onAdd }) {
     setRep({ total, grp, from, to });
   }
 
+  // Помесячная сводка: доход / расход / остаток по каждому месяцу.
+  const byMonth = {};
+  f.forEach((x) => {
+    const m = String(x.date).slice(0, 7);
+    if (!byMonth[m]) byMonth[m] = { inc: 0, exp: 0 };
+    if (x.type === 'income') byMonth[m].inc += +x.amount; else byMonth[m].exp += +x.amount;
+  });
+  const months = Object.keys(byMonth).sort().reverse();
+
+  function exportOps() {
+    const rows = [['Дата', 'Тип', 'Категория', 'Подкатегория', 'Сумма', 'Комментарий']];
+    f.slice().sort((a, b) => String(a.date).localeCompare(String(b.date))).forEach((x) => {
+      rows.push([String(x.date).slice(0, 10), x.type === 'income' ? 'Доход' : 'Расход', x.category || '', x.subcategory || '', Math.round(+x.amount || 0), x.note || '']);
+    });
+    downloadCSV('medina-операции-' + todayStr() + '.csv', rows);
+  }
+  function exportSummary() {
+    const rows = [['Месяц', 'Доход', 'Расход', 'Остаток']];
+    months.slice().reverse().forEach((m) => {
+      const r = byMonth[m];
+      rows.push([monthName(m), Math.round(r.inc), Math.round(r.exp), Math.round(r.inc - r.exp)]);
+    });
+    rows.push(['Итого', Math.round(inc), Math.round(exp), Math.round(inc - exp)]);
+    downloadCSV('medina-сводка-' + todayStr() + '.csv', rows);
+  }
+
   return (
     <>
       <div className="card">
@@ -325,6 +366,40 @@ function FinTab({ db, onAdd }) {
         </div>
         <div className="tile" style={{ background: 'var(--eef)', marginTop: 10 }}><div className="l" style={{ color: 'var(--primd)' }}>Остаток (доход − расход)</div><div className="v" style={{ fontSize: 20, color: 'var(--primd)' }}>{money(inc - exp)}</div></div>
         <button className="btn" onClick={onAdd}>+ Добавить расход / доход</button>
+      </div>
+
+      <div className="card">
+        <h2 style={{ fontSize: 15 }}>Помесячная сводка</h2>
+        <div className="small">Доход, расход и остаток по каждому месяцу.</div>
+        <div className="noprint" style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          <button className="btn sec" style={{ margin: 0, flex: 1, minWidth: 90 }} onClick={() => window.print()}>🖨 Печать</button>
+          <button className="btn sec" style={{ margin: 0, flex: 1, minWidth: 120 }} onClick={exportSummary}>⬇ Сводка в Excel</button>
+          <button className="btn sec" style={{ margin: 0, flex: 1, minWidth: 130 }} onClick={exportOps}>⬇ Операции в Excel</button>
+        </div>
+        {months.length ? (
+          <div style={{ overflow: 'auto', marginTop: 12 }}>
+            <table><tbody>
+              <tr><th>Месяц</th><th style={{ textAlign: 'right' }}>Доход</th><th style={{ textAlign: 'right' }}>Расход</th><th style={{ textAlign: 'right' }}>Остаток</th></tr>
+              {months.map((m) => {
+                const r = byMonth[m]; const bal = r.inc - r.exp;
+                return (
+                  <tr key={m}>
+                    <td style={{ fontWeight: 600 }}>{monthName(m)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--incd)' }}>{money(r.inc)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--expd)' }}>{money(r.exp)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: bal >= 0 ? 'var(--incd)' : 'var(--expd)' }}>{money(bal)}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: 'var(--panel)' }}>
+                <td style={{ fontWeight: 700 }}>Итого</td>
+                <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--incd)' }}>{money(inc)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--expd)' }}>{money(exp)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700, color: (inc - exp) >= 0 ? 'var(--incd)' : 'var(--expd)' }}>{money(inc - exp)}</td>
+              </tr>
+            </tbody></table>
+          </div>
+        ) : <div className="small" style={{ marginTop: 10 }}>Пока нет операций.</div>}
       </div>
 
       <div className="card noprint">
