@@ -218,10 +218,11 @@ const handlers = {
                            FROM shifts ORDER BY sdate DESC, id DESC`;
     return ok(rows);
   },
-  async addShift({ name, role, date, shift, hours }) {
+  async addShift({ name, role, date, shift, hours, checkIn, checkOut }) {
     if (!name) return fail('Укажите сотрудника');
-    await sql`INSERT INTO shifts (fio, role, sdate, shift, hours, confirmed)
-              VALUES (${name}, ${role || ''}, ${date}, ${shift || 'custom'}, ${parseFloat(hours) || 0}, true)`;
+    await sql`INSERT INTO shifts (fio, role, sdate, shift, hours, check_in, check_out, confirmed)
+              VALUES (${name}, ${role || ''}, ${date}, ${shift || 'custom'}, ${parseFloat(hours) || 0},
+                      ${checkIn || null}, ${checkOut || null}, true)`;
     return ok({ ok: true });
   },
 
