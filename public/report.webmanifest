@@ -1,0 +1,17 @@
+{
+  "name": "MEDINA — Отчёт",
+  "short_name": "Отчёт",
+  "description": "Отчёт о проживании (вахтовый метод), только просмотр",
+  "id": "/report",
+  "start_url": "/report",
+  "scope": "/report",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#d97706",
+  "orientation": "portrait-primary",
+  "lang": "ru",
+  "icons": [
+    { "src": "/icons/report-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/report-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
