@@ -1,0 +1,23 @@
+{
+  "name": "hotel-zhanatas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MEDINA — учёт гостиницы (вахтовый метод): комнаты, финансы, смены, отчёты",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:setup": "node scripts/setup-db.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "bcryptjs": "^2.4.3",
+    "next": "^15.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.7"
+  }
+}
