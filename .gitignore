@@ -8,9 +8,10 @@
 # production
 /build
 
-# env
+# env (никогда не коммитим секреты; исключение — шаблон .env.example)
 .env
-.env*.local
+.env.*
+!.env.example
 
 # vercel
 .vercel

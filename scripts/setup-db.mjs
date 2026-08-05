@@ -29,11 +29,19 @@ const statements = schema
 
 const sql = neon(url);
 
+// Драйвер Neon (HTTP) поддерживает только теговый шаблон. Оборачиваем готовую строку
+// в шаблонный массив без подстановок, чтобы выполнить произвольный SQL-оператор.
+function run(text) {
+  const strings = [text];
+  strings.raw = [text];
+  return sql(strings);
+}
+
 console.log(`→ Выполняю ${statements.length} операторов…`);
 for (const stmt of statements) {
   const preview = stmt.replace(/\s+/g, ' ').slice(0, 60);
   try {
-    await sql.query(stmt);
+    await run(stmt);
     console.log('  ✓', preview);
   } catch (e) {
     console.error('  ✗', preview, '\n    ', e.message);
