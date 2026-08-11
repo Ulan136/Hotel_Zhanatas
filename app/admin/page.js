@@ -92,6 +92,7 @@ export default function AdminPage() {
   /* ---------------- app ---------------- */
   const right = (
     <span>
+      {sess?.role === 'admin' && <button className="link" style={{ color: '#fff', marginRight: 12 }} onClick={() => setScreen('uchet')}>📊 Учёт</button>}
       <button className="link" style={{ color: '#fff', marginRight: 12 }} onClick={() => openSettings()}>⚙ Настройки</button>
       <button className="link" style={{ color: '#fff' }} onClick={logout}>выйти</button>
     </span>
@@ -104,17 +105,18 @@ export default function AdminPage() {
         {screen === 'settings'
           ? <Settings db={db} seg={seg} sess={sess} users={users} setSeg={openSettings} setModal={setModal}
               onDelete={handleDelete} backToApp={() => setScreen('tabs')} />
+          : screen === 'uchet'
+          ? <Uchet db={db} backToApp={() => setScreen('tabs')} />
           : <>
               {tab === 'rooms' && <RoomsTab db={db} onFree={(n) => setModal({ type: 'checkin', room: n })} onOcc={(stay) => setModal({ type: 'room', stay })} />}
               {tab === 'fin' && <FinTab db={db} onAdd={() => setModal({ type: 'fin' })} />}
               {tab === 'shifts' && <ShiftsTab db={db} onAdd={() => setModal({ type: 'shift' })} />}
-              {tab === 'rep' && <ReportTab db={db} />}
             </>}
       </div>
 
       {screen === 'tabs' && (
         <div className="tabbar">
-          {[['rooms', '▦', 'Комнаты'], ['fin', '₸', 'Расходы'], ['shifts', '🕒', 'Смены'], ['rep', '📄', 'Отчёт']].map((x) => (
+          {[['rooms', '▦', 'Комнаты'], ['fin', '₸', 'Расходы'], ['shifts', '🕒', 'Смены']].map((x) => (
             <button key={x[0]} className={tab === x[0] ? 'active' : ''} onClick={() => setTab(x[0])}>
               <span className="ic">{x[1]}</span>{x[2]}
             </button>
@@ -306,8 +308,38 @@ function CheckinModal({ room, guests, onClose, onSaved }) {
   );
 }
 
-/* ===================== Finance ===================== */
+/* ===================== Finance — операции (для персонала) ===================== */
 function FinTab({ db, onAdd }) {
+  const f = db.finance;
+  return (
+    <>
+      <div className="card">
+        <h2>Расходы и доходы</h2>
+        <div className="small">Внесение операций. Сводки, отчёты и остаток — в разделе «📊 Учёт» (у администратора).</div>
+        <button className="btn" onClick={onAdd}>+ Добавить расход / доход</button>
+      </div>
+
+      <div className="card">
+        <h2 style={{ fontSize: 15 }}>Последние операции</h2>
+        {f.length ? f.slice().reverse().slice(0, 40).map((x, i) => {
+          const g = x.type === 'income';
+          return (
+            <div key={x.id ?? i} className="list-item">
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>{x.category}{x.subcategory ? ' › ' + x.subcategory : ''}</div>
+                <div className="small">{fmt(x.date)}{x.note ? ' · ' + x.note : ''}</div>
+              </div>
+              <div style={{ fontWeight: 700, color: g ? 'var(--incd)' : 'var(--expd)' }}>{g ? '+' : '−'}{money(Math.abs(x.amount))}</div>
+            </div>
+          );
+        }) : <div className="small">Пока нет операций.</div>}
+      </div>
+    </>
+  );
+}
+
+/* ===================== Finance — отчёт (для учёта) ===================== */
+function FinReport({ db }) {
   const f = db.finance;
   const inc = f.filter((x) => x.type === 'income').reduce((a, b) => a + +b.amount, 0);
   const exp = f.filter((x) => x.type === 'expense').reduce((a, b) => a + +b.amount, 0);
@@ -330,7 +362,6 @@ function FinTab({ db, onAdd }) {
     setRep({ total, grp, from, to });
   }
 
-  // Помесячная сводка: доход / расход / остаток по каждому месяцу.
   const byMonth = {};
   f.forEach((x) => {
     const m = String(x.date).slice(0, 7);
@@ -359,13 +390,12 @@ function FinTab({ db, onAdd }) {
   return (
     <>
       <div className="card">
-        <h2>Расходы и доходы</h2>
+        <h2 style={{ fontSize: 15 }}>Итог за всё время</h2>
         <div className="tiles" style={{ marginTop: 8 }}>
           <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Доход</div><div className="v" style={{ fontSize: 18, color: 'var(--incd)' }}>{money(inc)}</div></div>
           <div className="tile" style={{ background: 'var(--fullbg)' }}><div className="l" style={{ color: 'var(--expd)' }}>Расход</div><div className="v" style={{ fontSize: 18, color: 'var(--expd)' }}>{money(exp)}</div></div>
         </div>
         <div className="tile" style={{ background: 'var(--eef)', marginTop: 10 }}><div className="l" style={{ color: 'var(--primd)' }}>Остаток (доход − расход)</div><div className="v" style={{ fontSize: 20, color: 'var(--primd)' }}>{money(inc - exp)}</div></div>
-        <button className="btn" onClick={onAdd}>+ Добавить расход / доход</button>
       </div>
 
       <div className="card">
@@ -427,22 +457,6 @@ function FinTab({ db, onAdd }) {
           ) : <div className="small">Нет расходов за период.</div>}
         </div>
       )}
-
-      <div className="card">
-        <h2 style={{ fontSize: 15 }}>Последние операции</h2>
-        {f.length ? f.slice().reverse().slice(0, 40).map((x, i) => {
-          const g = x.type === 'income';
-          return (
-            <div key={x.id ?? i} className="list-item">
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{x.category}{x.subcategory ? ' › ' + x.subcategory : ''}</div>
-                <div className="small">{fmt(x.date)}{x.note ? ' · ' + x.note : ''}</div>
-              </div>
-              <div style={{ fontWeight: 700, color: g ? 'var(--incd)' : 'var(--expd)' }}>{g ? '+' : '−'}{money(Math.abs(x.amount))}</div>
-            </div>
-          );
-        }) : <div className="small">Пока нет операций.</div>}
-      </div>
     </>
   );
 }
@@ -517,9 +531,46 @@ function FinModal({ cats, onClose, onSaved, onNeedCats }) {
 
 /* ===================== Shifts ===================== */
 const shiftLabel = (t) => t === 'day' ? 'День 08:00–20:00' : t === 'night' ? 'Ночь 20:00–08:00' : 'Своя';
+
+/* Операции (для персонала): добавить смену + график */
 function ShiftsTab({ db, onAdd }) {
   const sh = db.shifts.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   const hours = sh.reduce((a, b) => a + (+b.hours || 0), 0);
+
+  return (
+    <>
+      <div className="card">
+        <h2>Смены персонала</h2>
+        <div className="small">Охрана отмечает приход/уход по QR. Табель — в разделе «📊 Учёт».</div>
+        <div className="tiles" style={{ marginTop: 10 }}>
+          <div className="tile" style={{ background: 'var(--eef)' }}><div className="v" style={{ fontSize: 18, color: 'var(--primd)' }}>{sh.length}</div><div className="l" style={{ color: 'var(--primd)' }}>смен</div></div>
+          <div className="tile" style={{ background: 'var(--freebg)' }}><div className="v" style={{ fontSize: 18, color: 'var(--incd)' }}>{hours}</div><div className="l" style={{ color: 'var(--incd)' }}>часов</div></div>
+        </div>
+        <button className="btn" onClick={onAdd}>+ Добавить смену</button>
+        <div className="small" style={{ marginTop: 8 }}>Охранников заводите в «⚙ Настройки → Работники» (должность «Охрана»).</div>
+      </div>
+
+      <div className="card">
+        <h2 style={{ fontSize: 15 }}>График смен</h2>
+        {sh.length ? (
+          <div style={{ overflow: 'auto' }}>
+            <table><tbody>
+              <tr><th>Дата</th><th>Сотрудник</th><th>Должн.</th><th>Смена</th><th>Ч</th><th>Подтв.</th></tr>
+              {sh.map((x) => {
+                const conf = x.confirmed ? <span style={{ color: 'var(--incd)', fontWeight: 700 }}>✓</span> : (x.role === 'Охрана' ? <span style={{ color: 'var(--warnd)' }}>ждёт</span> : '—');
+                const sm = x.checkIn ? (timeHM(x.checkIn) + '–' + (x.checkOut ? timeHM(x.checkOut) : '…')) : shiftLabel(x.shift);
+                return <tr key={x.id}><td>{fmt(x.date)}</td><td style={{ fontWeight: 600 }}>{x.fio}</td><td>{x.role || ''}</td><td>{sm}</td><td>{x.checkIn && !x.checkOut ? '…' : (x.hours || '')}</td><td>{conf}</td></tr>;
+              })}
+            </tbody></table>
+          </div>
+        ) : <div className="small">Смен нет.</div>}
+      </div>
+    </>
+  );
+}
+
+/* Табель (для учёта) */
+function ShiftsReport({ db }) {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(todayStr());
   const [tabel, setTabel] = useState(null);
@@ -534,17 +585,6 @@ function ShiftsTab({ db, onAdd }) {
 
   return (
     <>
-      <div className="card">
-        <h2>Смены персонала</h2>
-        <div className="small">Охрана отмечает приход/уход по QR — часы считаются автоматически.</div>
-        <div className="tiles" style={{ marginTop: 10 }}>
-          <div className="tile" style={{ background: 'var(--eef)' }}><div className="v" style={{ fontSize: 18, color: 'var(--primd)' }}>{sh.length}</div><div className="l" style={{ color: 'var(--primd)' }}>смен</div></div>
-          <div className="tile" style={{ background: 'var(--freebg)' }}><div className="v" style={{ fontSize: 18, color: 'var(--incd)' }}>{hours}</div><div className="l" style={{ color: 'var(--incd)' }}>часов</div></div>
-        </div>
-        <button className="btn" onClick={onAdd}>+ Добавить смену</button>
-        <div className="small" style={{ marginTop: 8 }}>Охранников заводите в «⚙ Настройки → Работники» (должность «Охрана»).</div>
-      </div>
-
       <div className="card noprint">
         <h2 style={{ fontSize: 15 }}>Табель за период</h2>
         <label>с</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -567,22 +607,6 @@ function ShiftsTab({ db, onAdd }) {
           ) : <div className="small">Нет смен.</div>}
         </div>
       )}
-
-      <div className="card">
-        <h2 style={{ fontSize: 15 }}>График смен</h2>
-        {sh.length ? (
-          <div style={{ overflow: 'auto' }}>
-            <table><tbody>
-              <tr><th>Дата</th><th>Сотрудник</th><th>Должн.</th><th>Смена</th><th>Ч</th><th>Подтв.</th></tr>
-              {sh.map((x) => {
-                const conf = x.confirmed ? <span style={{ color: 'var(--incd)', fontWeight: 700 }}>✓</span> : (x.role === 'Охрана' ? <span style={{ color: 'var(--warnd)' }}>ждёт</span> : '—');
-                const sm = x.checkIn ? (timeHM(x.checkIn) + '–' + (x.checkOut ? timeHM(x.checkOut) : '…')) : shiftLabel(x.shift);
-                return <tr key={x.id}><td>{fmt(x.date)}</td><td style={{ fontWeight: 600 }}>{x.fio}</td><td>{x.role || ''}</td><td>{sm}</td><td>{x.checkIn && !x.checkOut ? '…' : (x.hours || '')}</td><td>{conf}</td></tr>;
-              })}
-            </tbody></table>
-          </div>
-        ) : <div className="small">Смен нет.</div>}
-      </div>
     </>
   );
 }
@@ -639,6 +663,31 @@ function ReportTab({ db }) {
           </tbody></table>
         </div>
       </div>
+    </>
+  );
+}
+
+/* ===================== Админ-учёт (все отчёты) ===================== */
+function Uchet({ db, backToApp }) {
+  const [seg, setSeg] = useState('stay');
+  const segs = [['stay', '🏨 Проживание'], ['fin', '₸ Финансы'], ['shifts', '🕒 Смены']];
+  return (
+    <>
+      <div className="card">
+        <h2>📊 Админ-учёт</h2>
+        <div className="small">Все отчёты гостиницы в одном месте: проживание вахты, финансы и табель смен.</div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+          {segs.map((s) => (
+            <button key={s[0]} className={'btn ' + (seg === s[0] ? '' : 'sec')} style={{ flex: '1 1 30%', margin: 0, padding: '9px 4px', fontSize: 13, minWidth: 96 }} onClick={() => setSeg(s[0])}>{s[1]}</button>
+          ))}
+        </div>
+      </div>
+
+      {seg === 'stay' && <ReportTab db={db} />}
+      {seg === 'fin' && <FinReport db={db} />}
+      {seg === 'shifts' && <ShiftsReport db={db} />}
+
+      <div className="card"><button className="btn sec" onClick={backToApp}>← назад в кабинет</button></div>
     </>
   );
 }
