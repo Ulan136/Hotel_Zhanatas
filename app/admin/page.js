@@ -109,7 +109,7 @@ export default function AdminPage() {
           ? <Uchet db={db} backToApp={() => setScreen('tabs')} />
           : <>
               {tab === 'rooms' && <RoomsTab db={db} onFree={(n) => setModal({ type: 'checkin', room: n })} onOcc={(stay) => setModal({ type: 'room', stay })} />}
-              {tab === 'fin' && <FinTab db={db} onAdd={() => setModal({ type: 'fin' })} />}
+              {tab === 'fin' && <FinTab db={db} onAdd={() => setModal({ type: 'fin' })} setModal={setModal} onDelete={handleDelete} />}
               {tab === 'shifts' && <ShiftsTab db={db} onAdd={() => setModal({ type: 'shift' })} />}
             </>}
       </div>
@@ -309,14 +309,23 @@ function CheckinModal({ room, guests, onClose, onSaved }) {
 }
 
 /* ===================== Finance — операции (для персонала) ===================== */
-function FinTab({ db, onAdd }) {
+function FinTab({ db, onAdd, setModal, onDelete }) {
   const f = db.finance;
   return (
     <>
       <div className="card">
-        <h2>Расходы и доходы</h2>
-        <div className="small">Внесение операций. Сводки, отчёты и остаток — в разделе «📊 Учёт» (у администратора).</div>
-        <button className="btn" onClick={onAdd}>+ Добавить расход / доход</button>
+        <h2>Категории расходов и доходов</h2>
+        <div className="small">Сначала создайте статьи и их виды (подкатегории) — <b>без сумм</b>. По ним потом вносятся операции и строится отчёт.</div>
+        <button className="btn" onClick={() => setModal({ type: 'cat' })}>+ Новая категория</button>
+      </div>
+      <div className="card">
+        <CatsList db={db} setModal={setModal} onDelete={onDelete} />
+      </div>
+
+      <div className="card">
+        <h2 style={{ fontSize: 15 }}>Внести операцию</h2>
+        <div className="small">Отдельно от категорий: расход или доход <b>с суммой и датой</b> по выбранной категории.</div>
+        <button className="btn" onClick={onAdd}>+ Добавить расход / доход (сумма)</button>
       </div>
 
       <div className="card">
@@ -500,7 +509,8 @@ function FinModal({ cats, onClose, onSaved, onNeedCats }) {
 
   return (
     <>
-      <h2>Новая операция</h2>
+      <h2>Новая операция (сумма)</h2>
+      <div className="small" style={{ marginBottom: 4 }}>Запись расхода/дохода с суммой. Категории создаются отдельно — во вкладке «Расходы».</div>
       <label>Тип</label>
       <select value={type} onChange={(e) => setType(e.target.value)}>
         <option value="expense">Расход</option><option value="income">Доход</option>
