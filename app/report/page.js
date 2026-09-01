@@ -5,37 +5,9 @@ import { api, getSess, setSess, clearSess, getLastLogin, forgetMe, REPORT_SESS_K
 import { TopBar, Busy } from '@/components/kit';
 import { fmt, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
 import { fuzzyScore } from '@/lib/fuzzy';
+import { downloadXlsx } from '@/lib/xlsx';
 
 const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
-
-/* Выгрузка в Excel: CSV с точкой с запятой и BOM — Excel открывает такой файл сразу.
-   Скачивание сделано устойчиво: ссылку отзываем с задержкой (иначе часть браузеров
-   обрывает загрузку), а если сохранить не дали — открываем файл в новой вкладке. */
-function downloadCSV(filename, rows) {
-  const cell = (v) => { v = String(v == null ? '' : v); return /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-  const csv = rows.map((r) => r.map(cell).join(';')).join('\r\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-
-  try {
-    const a = document.createElement('a');
-    if ('download' in a) {
-      const url = URL.createObjectURL(blob);
-      a.href = url; a.download = filename; a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch {} }, 5000);
-      return;
-    }
-  } catch {}
-
-  try {
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, '_blank');
-    if (w) { setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60000); return; }
-  } catch {}
-
-  alert('Браузер не дал сохранить файл. Откройте отчёт в обычном браузере (не в режиме приложения) и повторите.');
-}
 
 function statusText(s) {
   return s === 'closed' ? 'выехал' : s === 'booked' ? 'бронь' : 'проживает';
@@ -147,7 +119,9 @@ export default function ReportPage() {
       ['Свободно комнат', freeRooms.length, 'Занято комнат', busyRooms.size, 'Всего', rooms.length],
       [],
     ];
-    downloadCSV(`MEDINA_report_${from}_${to}.csv`, [...meta, head, ...body]);
+    const rows = [...meta, head, ...body];
+    downloadXlsx(`MEDINA_report_${from}_${to}.xlsx`, rows,
+      { sheetName: 'Отчёт', boldRows: [0, meta.length] });
   }
 
   if (!authed) {
