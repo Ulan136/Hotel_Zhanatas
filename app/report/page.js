@@ -33,6 +33,7 @@ export default function ReportPage() {
 
   const [rows, setRows] = useState([]);
   const [rooms, setRooms] = useState([]);
+  const [showRooms, setShowRooms] = useState(false); // управляется в кабинете
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(todayStr());
   const [q, setQ] = useState('');
@@ -61,9 +62,10 @@ export default function ReportPage() {
   async function render() {
     setBusy(true);
     try {
-      const d = await api('report');
+      const [d, cfg] = await Promise.all([api('report'), api('settings').catch(() => null)]);
       setRows(Array.isArray(d?.rows) ? d.rows : []);
       setRooms(Array.isArray(d?.rooms) ? d.rooms : []);
+      setShowRooms(cfg?.report_show_rooms === '1');
     } catch { setRows([]); setRooms([]); } finally { setBusy(false); }
   }
 
@@ -112,17 +114,20 @@ export default function ReportPage() {
   }
 
   function exportExcel() {
-    const head = ['№', 'ФИО', 'ИИН', 'Телефон', 'Компания', 'Гражданство', 'Блок', 'Комната', 'Прибытие', 'Выбытие', 'Суток', 'Статус'];
+    const head = ['№', 'ФИО', 'ИИН', 'Телефон', 'Компания', 'Гражданство',
+      ...(showRooms ? ['Блок', 'Комната'] : []),
+      'Прибытие', 'Выбытие', 'Суток', 'Статус'];
     const body = list.map((s, i) => [
       i + 1, s.fio, s.iin || '', s.phone ? formatPhone(s.phone) : '', s.company || '', s.citizenship || '',
-      blockOf(s.room), s.room, fmt(s.arrival), s.departure ? fmt(s.departure) : '—',
+      ...(showRooms ? [blockOf(s.room), s.room] : []),
+      fmt(s.arrival), s.departure ? fmt(s.departure) : '—',
       nightsNow(s.arrival, s.departure), statusText(s.status),
     ]);
     const meta = [
       ['MEDINA — отчёт о проживании (вахтовый метод)'],
       ['Период', period],
       ['Проживаний в отчёте', list.length, 'человеко-суток', totalNights],
-      ['Свободно комнат', freeRooms.length, 'занято', busyRooms.size],
+      ...(showRooms ? [['Свободно комнат', freeRooms.length, 'занято', busyRooms.size]] : []),
       [],
     ];
     downloadCSV(`MEDINA_отчёт_${from}_${to}.csv`, [...meta, head, ...body]);
@@ -230,7 +235,8 @@ export default function ReportPage() {
               <tbody>
                 <tr>
                   <th>ФИО</th><th>ИИН</th><th>Телефон</th><th>Компания</th>
-                  <th>Комн.</th><th>Прибытие</th><th>Выбытие</th><th>Сут.</th><th>Статус</th>
+                  {showRooms && <th>Комн.</th>}
+                  <th>Прибытие</th><th>Выбытие</th><th>Сут.</th><th>Статус</th>
                 </tr>
                 {list.length ? list.map((s) => (
                   <tr key={s.id}>
@@ -238,19 +244,20 @@ export default function ReportPage() {
                     <td>{s.iin || '—'}</td>
                     <td>{s.phone ? formatPhone(s.phone) : '—'}</td>
                     <td>{s.company || '—'}</td>
-                    <td>№{s.room}</td>
+                    {showRooms && <td>№{s.room}</td>}
                     <td>{fmt(s.arrival)}</td>
                     <td>{s.departure ? fmt(s.departure) : '—'}</td>
                     <td>{nightsNow(s.arrival, s.departure)}</td>
                     <td>{statusText(s.status)}</td>
                   </tr>
-                )) : <tr><td colSpan={9} className="small">Ничего не найдено за выбранный период.</td></tr>}
+                )) : <tr><td colSpan={showRooms ? 9 : 8} className="small">Ничего не найдено за выбранный период.</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* --- Занятость комнат --- */}
+        {/* --- Занятость комнат: показывается, только если разрешено в кабинете --- */}
+        {showRooms && (
         <div className="card">
           <div style={{ fontWeight: 700, marginBottom: 4 }}>Комнаты сейчас</div>
           <div className="small" style={{ marginBottom: 8 }}>
@@ -282,6 +289,7 @@ export default function ReportPage() {
             </div>
           )) : <div className="small">Занятых комнат нет.</div>}
         </div>
+        )}
 
       </div>
       <Busy show={busy} />
