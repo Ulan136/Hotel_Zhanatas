@@ -98,7 +98,14 @@ CREATE INDEX IF NOT EXISTS shifts_fio_open_idx ON shifts (fio) WHERE check_in IS
 CREATE INDEX IF NOT EXISTS finance_fdate_idx ON finance (fdate);
 CREATE INDEX IF NOT EXISTS stays_room_idx ON stays (room);
 
--- Комнатный фонд: номера 1..28
+-- Комнатный фонд: два блока.
+--   Блок 1 — комнаты 101..112 (12 шт.)
+--   Блок 2 — комнаты 201..216 (16 шт.)
+-- Итого 28 комнат. Блок определяется первой цифрой номера.
 INSERT INTO rooms (room)
-SELECT generate_series(1, 28)
+SELECT generate_series(101, 112)
+ON CONFLICT (room) DO NOTHING;
+
+INSERT INTO rooms (room)
+SELECT generate_series(201, 216)
 ON CONFLICT (room) DO NOTHING;
