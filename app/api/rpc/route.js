@@ -227,6 +227,22 @@ const handlers = {
     return ok({ ok: true });
   },
 
+  /* ---------- Настройки системы ---------- */
+  async settings() {
+    const rows = await sql`SELECT skey, svalue FROM settings`;
+    const out = {};
+    for (const r of rows) out[r.skey] = r.svalue;
+    // Значения по умолчанию, если строки ещё нет.
+    if (out.report_show_rooms === undefined) out.report_show_rooms = '0';
+    return ok(out);
+  },
+  async setSetting({ key, value }) {
+    if (!key) return fail('Не указан параметр');
+    await sql`INSERT INTO settings (skey, svalue) VALUES (${key}, ${String(value ?? '')})
+              ON CONFLICT (skey) DO UPDATE SET svalue = EXCLUDED.svalue`;
+    return ok({ ok: true });
+  },
+
   /* ---------- Отчёт заказчика ---------- */
   // Проживания вместе с данными гостя (ИИН, телефон) и списком комнат — для поиска и занятости.
   async report() {
