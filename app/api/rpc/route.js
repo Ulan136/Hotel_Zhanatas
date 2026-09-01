@@ -84,7 +84,7 @@ const handlers = {
   /* ---------- Общий срез (bootstrap) ---------- */
   async bootstrap() {
     const [guests, staff, categories, finance, shifts, stays, roomRows] = await Promise.all([
-      sql`SELECT id, fio, company, phone FROM guests ORDER BY fio`,
+      sql`SELECT id, fio, iin, company, citizenship, phone FROM guests ORDER BY fio`,
       sql`SELECT id, fio, role, phone FROM staff ORDER BY fio`,
       sql`SELECT id, name, ctype AS type, parent_id AS parent FROM categories ORDER BY id`,
       sql`SELECT id, ftype AS type, category, subcategory, amount::float8 AS amount, fdate::text AS date, note FROM finance ORDER BY id`,
@@ -110,16 +110,23 @@ const handlers = {
 
   /* ---------- Гости ---------- */
   async guests() {
-    const rows = await sql`SELECT id, fio, company, phone FROM guests ORDER BY fio`;
+    const rows = await sql`SELECT id, fio, iin, company, citizenship, phone FROM guests ORDER BY fio`;
     return ok(rows);
   },
-  async addGuest({ fio, company, phone }) {
+  async addGuest({ fio, iin, company, citizenship, phone }) {
     if (!fio) return fail('Укажите ФИО');
-    const rows = await sql`INSERT INTO guests (fio, company, phone) VALUES (${fio}, ${company || ''}, ${phone || ''}) RETURNING id`;
+    if (!iin) return fail('Укажите ИИН');
+    const rows = await sql`INSERT INTO guests (fio, iin, company, citizenship, phone)
+                           VALUES (${fio}, ${iin || ''}, ${company || ''}, ${citizenship || ''}, ${phone || ''})
+                           RETURNING id`;
     return ok({ ok: true, id: rows[0].id });
   },
-  async updateGuest({ id, fio, company, phone }) {
-    await sql`UPDATE guests SET fio = ${fio}, company = ${company || ''}, phone = ${phone || ''} WHERE id = ${Number(id)}`;
+  async updateGuest({ id, fio, iin, company, citizenship, phone }) {
+    if (!fio) return fail('Укажите ФИО');
+    if (!iin) return fail('Укажите ИИН');
+    await sql`UPDATE guests SET fio = ${fio}, iin = ${iin || ''}, company = ${company || ''},
+                                citizenship = ${citizenship || ''}, phone = ${phone || ''}
+              WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
   async deleteGuest({ id }) {
@@ -192,14 +199,15 @@ const handlers = {
     const rows = await sql`SELECT room FROM rooms WHERE room NOT IN (SELECT room FROM stays WHERE status <> 'closed') ORDER BY room`;
     return ok(rows.map((r) => r.room));
   },
-  async checkin({ guestId, fio, room, arrival, departure, source }) {
-    if (!arrival) return fail('Укажите период');
+  // Дата выбытия при заселении НЕ указывается — она проставляется при выселении (checkout).
+  async checkin({ guestId, fio, room, arrival, source }) {
+    if (!arrival) return fail('Укажите дату прибытия');
     const rn = Number(room);
     const busy = await sql`SELECT 1 FROM stays WHERE room = ${rn} AND status <> 'closed' LIMIT 1`;
     if (busy.length) return fail('Комната уже занята — выберите другую.');
     try {
       await sql`INSERT INTO stays (guest_id, fio, room, arrival, departure, status, source)
-                VALUES (${guestId ? Number(guestId) : null}, ${fio}, ${rn}, ${arrival}, ${departure || null}, 'on_shift', ${source || ''})`;
+                VALUES (${guestId ? Number(guestId) : null}, ${fio}, ${rn}, ${arrival}, NULL, 'on_shift', ${source || ''})`;
     } catch (e) {
       if (e.code === '23505') return fail('Комнату только что заняли — выберите другую.');
       throw e;
