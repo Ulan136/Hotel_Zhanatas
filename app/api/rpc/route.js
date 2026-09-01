@@ -214,8 +214,16 @@ const handlers = {
     }
     return ok({ ok: true });
   },
-  async checkout({ id }) {
-    await sql`UPDATE stays SET status = 'closed', departure = COALESCE(departure, CURRENT_DATE) WHERE id = ${Number(id)}`;
+  // Дата выбытия приходит со страницы гостя (по умолчанию сегодня, но её можно изменить).
+  async checkout({ id, departure }) {
+    const rows = await sql`SELECT arrival::text AS arrival FROM stays WHERE id = ${Number(id)}`;
+    if (!rows.length) return fail('Заселение не найдено');
+    if (departure) {
+      if (departure < rows[0].arrival) return fail('Дата выбытия раньше даты прибытия');
+      await sql`UPDATE stays SET status = 'closed', departure = ${departure} WHERE id = ${Number(id)}`;
+    } else {
+      await sql`UPDATE stays SET status = 'closed', departure = COALESCE(departure, CURRENT_DATE) WHERE id = ${Number(id)}`;
+    }
     return ok({ ok: true });
   },
 
