@@ -98,6 +98,16 @@ CREATE INDEX IF NOT EXISTS shifts_fio_open_idx ON shifts (fio) WHERE check_in IS
 CREATE INDEX IF NOT EXISTS finance_fdate_idx ON finance (fdate);
 CREATE INDEX IF NOT EXISTS stays_room_idx ON stays (room);
 
+-- Настройки системы (ключ → значение). Пока используется отчётом заказчика.
+CREATE TABLE IF NOT EXISTS settings (
+  skey   TEXT PRIMARY KEY,
+  svalue TEXT NOT NULL DEFAULT ''
+);
+
+-- Показывать ли номера комнат в отчёте заказчика ('1' — да, '0' — нет).
+INSERT INTO settings (skey, svalue) VALUES ('report_show_rooms', '0')
+ON CONFLICT (skey) DO NOTHING;
+
 -- Комнатный фонд: два блока.
 --   Блок 1 — комнаты 101..112 (12 шт.)
 --   Блок 2 — комнаты 201..216 (16 шт.)
