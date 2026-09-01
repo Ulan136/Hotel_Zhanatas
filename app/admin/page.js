@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
+import { downloadXlsx } from '@/lib/xlsx';
 import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock } from '@/lib/ui';
 
@@ -12,32 +13,6 @@ const subCats = (cats, pid) => cats.filter((c) => String(c.parent || '') === Str
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 function monthName(m) { const [y, mm] = m.split('-'); return (MONTHS[+mm - 1] || mm) + ' ' + y; }
-
-// --- Экспорт в Excel (CSV) ---
-function csvCell(v) { v = String(v == null ? '' : v); return /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
-function downloadCSV(filename, rows) {
-  const csv = rows.map((r) => r.map(csvCell).join(';')).join('\r\n');
-  // BOM (﻿) — чтобы Excel правильно открыл кириллицу в UTF-8.
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  try {
-    const a = document.createElement('a');
-    if ('download' in a) {
-      const url = URL.createObjectURL(blob);
-      a.href = url; a.download = filename; a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      // Отзываем ссылку с задержкой — иначе часть браузеров обрывает скачивание.
-      setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch {} }, 5000);
-      return;
-    }
-  } catch {}
-  try {
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, '_blank');
-    if (w) { setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60000); return; }
-  } catch {}
-  alert('Браузер не дал сохранить файл. Откройте кабинет в обычном браузере (не в режиме приложения) и повторите.');
-}
 
 export default function AdminPage() {
   const [sess, setSess] = useState(null);
@@ -422,7 +397,7 @@ function FinReport({ db }) {
     f.slice().sort((a, b) => String(a.date).localeCompare(String(b.date))).forEach((x) => {
       rows.push([String(x.date).slice(0, 10), x.type === 'income' ? 'Доход' : 'Расход', x.category || '', x.subcategory || '', Math.round(+x.amount || 0), x.note || '']);
     });
-    downloadCSV('medina-operations-' + todayStr() + '.csv', rows);
+    downloadXlsx('medina-operations-' + todayStr() + '.xlsx', rows, { sheetName: 'Операции', boldRows: [0] });
   }
   function exportSummary() {
     const rows = [['Месяц', 'Доход', 'Расход', 'Остаток']];
@@ -431,7 +406,7 @@ function FinReport({ db }) {
       rows.push([monthName(m), Math.round(r.inc), Math.round(r.exp), Math.round(r.inc - r.exp)]);
     });
     rows.push(['Итого', Math.round(inc), Math.round(exp), Math.round(inc - exp)]);
-    downloadCSV('medina-summary-' + todayStr() + '.csv', rows);
+    downloadXlsx('medina-summary-' + todayStr() + '.xlsx', rows, { sheetName: 'Сводка', boldRows: [0, rows.length - 1] });
   }
 
   return (
