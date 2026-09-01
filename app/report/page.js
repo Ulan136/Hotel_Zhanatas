@@ -26,6 +26,7 @@ export default function ReportPage() {
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(todayStr());
   const [q, setQ] = useState('');
+  const [who, setWho] = useState('all'); // all | living | left
 
   useEffect(() => {
     const s = getSess(SK);
@@ -74,6 +75,13 @@ export default function ReportPage() {
     return true;
   });
 
+  const nLiving = list.filter((s) => s.status !== 'closed').length;
+  const nLeft = list.filter((s) => s.status === 'closed').length;
+
+  /* ---------- фильтр по статусу: проживает / уже выехал ---------- */
+  if (who === 'living') list = list.filter((s) => s.status !== 'closed');
+  if (who === 'left') list = list.filter((s) => s.status === 'closed');
+
   /* ---------- поиск: ФИО (с опечатками), ИИН, телефон ---------- */
   const qDigits = onlyDigits(q);
   if (q.trim()) {
@@ -115,6 +123,7 @@ export default function ReportPage() {
     const meta = [
       ['MEDINA — отчёт о проживании (вахтовый метод)'],
       ['Период', period],
+      ['Показаны', who === 'living' ? 'только проживающие' : who === 'left' ? 'только выехавшие' : 'все'],
       ['Проживаний в отчёте', list.length, 'человеко-суток', totalNights],
       ['Свободно комнат', freeRooms.length, 'Занято комнат', busyRooms.size, 'Всего', rooms.length],
       [],
@@ -225,6 +234,19 @@ export default function ReportPage() {
         {/* --- Поиск и таблица --- */}
         <div className="card">
           <div className="noprint">
+            <label>Показывать</label>
+            <div className="chips-row" style={{ marginTop: 4 }}>
+              <button className={'chipbtn' + (who === 'all' ? ' on' : '')} onClick={() => setWho('all')}>
+                Все <b>{nLiving + nLeft}</b>
+              </button>
+              <button className={'chipbtn' + (who === 'living' ? ' on' : '')} onClick={() => setWho('living')}>
+                Проживают <b>{nLiving}</b>
+              </button>
+              <button className={'chipbtn' + (who === 'left' ? ' on' : '')} onClick={() => setWho('left')}>
+                Выехали <b>{nLeft}</b>
+              </button>
+            </div>
+
             <label>Поиск</label>
             <input placeholder="🔎 ФИО, ИИН или телефон" value={q} onChange={(e) => setQ(e.target.value)} />
             <div className="small" style={{ marginTop: 6 }}>
@@ -233,7 +255,9 @@ export default function ReportPage() {
             </div>
           </div>
 
-          <div style={{ fontWeight: 700, margin: '12px 0 6px' }}>Проживание работников</div>
+          <div style={{ fontWeight: 700, margin: '12px 0 6px' }}>
+            {who === 'living' ? 'Проживают сейчас' : who === 'left' ? 'Уже выехали' : 'Проживание работников'}
+          </div>
           <div style={{ overflow: 'auto' }}>
             <table>
               <tbody>
