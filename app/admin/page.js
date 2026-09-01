@@ -747,13 +747,13 @@ function Row({ av, title, sub, onEdit, onDel }) {
 
 function Settings({ db, seg, sess, users, setSeg, setModal, onDelete, backToApp }) {
   const segs = [['guests', 'Гости'], ['staff', 'Работники'], ['cats', 'Категории']];
-  if (sess?.role === 'admin') segs.unshift(['users', 'Пользователи']);
+  if (sess?.role === 'admin') { segs.unshift(['users', 'Пользователи']); segs.push(['report', 'Отчёт']); }
 
   return (
     <>
       <div className="card">
         <h2>⚙ Настройки</h2>
-        <div className="small">Пользователи — доступ по логину; Гости — кто заселяется; Работники — персонал; Категории — статьи доходов и расходов.</div>
+        <div className="small">Пользователи — доступ по логину; Гости — кто заселяется; Работники — персонал; Категории — статьи доходов и расходов; Отчёт — что видит заказчик.</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           {segs.map((s) => (
             <button key={s[0]} className={'btn ' + (seg === s[0] ? '' : 'sec')} style={{ flex: '1 1 30%', margin: 0, padding: '9px 4px', fontSize: 13, minWidth: 84 }} onClick={() => setSeg(s[0])}>{s[1]}</button>
@@ -805,6 +805,8 @@ function Settings({ db, seg, sess, users, setSeg, setModal, onDelete, backToApp 
         </div>
       )}
 
+      {seg === 'report' && <ReportSettings />}
+
       {seg === 'cats' && (
         <>
           <div className="card">
@@ -819,6 +821,53 @@ function Settings({ db, seg, sess, users, setSeg, setModal, onDelete, backToApp 
 
       <div className="card"><button className="btn sec" onClick={backToApp}>← назад в кабинет</button></div>
     </>
+  );
+}
+
+/* Что заказчик видит в своём отчёте. Часть гостиниц не хочет показывать номера комнат. */
+function ReportSettings() {
+  const [showRooms, setShowRooms] = useState(null);   // null — ещё грузим
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try { const s = await api('settings'); setShowRooms(s?.report_show_rooms === '1'); }
+      catch { setShowRooms(false); }
+    })();
+  }, []);
+
+  async function toggle(v) {
+    setShowRooms(v); setBusy(true); setSaved(false);
+    try {
+      const r = await api('setSetting', { key: 'report_show_rooms', value: v ? '1' : '0' });
+      if (!r.ok) { setShowRooms(!v); return alert(r.error || 'Не удалось сохранить'); }
+      setSaved(true);
+    } catch (e) { setShowRooms(!v); alert(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card">
+      <h2>Отчёт для заказчика</h2>
+      <div className="small">Настройки страницы /report — того, что видит руководство завода.</div>
+      {showRooms === null ? (
+        <div className="small" style={{ marginTop: 10 }}>Загружаем…</div>
+      ) : (
+        <>
+          <label className="remember" style={{ marginTop: 12 }}>
+            <input type="checkbox" checked={showRooms} disabled={busy} onChange={(e) => toggle(e.target.checked)} />
+            <span>Показывать номера комнат</span>
+          </label>
+          <div className="small" style={{ marginTop: 6 }}>
+            {showRooms
+              ? 'Заказчик видит колонку «Комната» и блок занятости комнат.'
+              : 'Номера комнат скрыты: заказчик видит только ФИО, ИИН, телефон, даты и сколько человек проживает.'}
+            {saved && <> · <b style={{ color: 'var(--incd)' }}>сохранено</b></>}
+          </div>
+        </>
+      )}
+      <Busy show={busy} />
+    </div>
   );
 }
 
