@@ -80,6 +80,11 @@ td{padding:8px 6px;border-bottom:1px solid var(--line)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .demo-badge{display:inline-block;background:#fde68a;color:#92400e;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
 
+
+/* Заголовок блока комнат */
+.block-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:14px 0 6px;font-weight:700;font-size:14px;color:var(--ink)}
+.block-title span{font-weight:500;font-size:12px;color:var(--muted)}
+
 /* «Запомнить меня» — чекбокс в форме входа */
 .remember{display:flex;align-items:center;gap:8px;margin:12px 0 2px;font-size:13.5px;color:var(--ink);cursor:pointer}
 .remember input[type=checkbox]{width:18px;height:18px;flex:0 0 18px;margin:0;padding:0;accent-color:var(--primary);cursor:pointer}
