@@ -83,8 +83,14 @@ export default function GuestPage() {
   useEffect(() => { load(); }, []);
   async function load() {
     setBusy(true);
-    try { setGuests(await api('guests')); }
-    catch { alert('Нет связи с базой.'); } finally { setBusy(false); }
+    try {
+      const r = await api('guests');
+      // Если API вернул ошибку (например, в базе ещё нет колонок iin/citizenship) —
+      // не роняем страницу, а показываем понятное сообщение.
+      if (Array.isArray(r)) setGuests(r);
+      else { setGuests([]); alert(r?.error || 'База ещё не обновлена. Обратитесь к администратору.'); }
+    } catch (e) { setGuests([]); alert(e.message || 'Нет связи с базой.'); }
+    finally { setBusy(false); }
   }
 
   // Если у гостя из списка нет ИИН или гражданства — просим дозаполнить анкету.
@@ -99,7 +105,7 @@ export default function GuestPage() {
 
   async function goStep2() {
     setBusy(true);
-    try { setFreeRooms(await api('freeRooms')); } catch { setFreeRooms([]); } finally { setBusy(false); }
+    try { const fr = await api('freeRooms'); setFreeRooms(Array.isArray(fr) ? fr : []); } catch { setFreeRooms([]); } finally { setBusy(false); }
     setStep(2);
   }
 
