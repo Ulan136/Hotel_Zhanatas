@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
-import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS } from '@/lib/ui';
+import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS, groupByBlock } from '@/lib/ui';
 
 const STAFF_ROLES = ['Повар', 'Помощник повара', 'Ресепшн', 'Уборка', 'Охрана', 'Другое'];
 const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [] };
@@ -257,17 +257,28 @@ function RoomsTab({ db, onFree, onOcc }) {
         <div className="tile" style={{ background: 'var(--fullbg)' }}><div className="v" style={{ color: 'var(--expd)' }}>{occ}</div><div className="l" style={{ color: 'var(--expd)' }}>занято</div></div>
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="v" style={{ color: 'var(--incd)' }}>{free}</div><div className="l" style={{ color: 'var(--incd)' }}>свободно</div></div>
       </div>
-      <div className="rooms">
-        {db.rooms.map((r) => {
-          const cls = r.status === 'free' ? 'free' : r.status === 'occ' ? 'occ' : 'book';
-          const s = r.status === 'free' ? 'свободно' : r.status === 'occ' ? 'занято' : 'бронь';
-          return (
-            <div key={r.room} className={'room ' + cls} onClick={() => r.status === 'free' ? onFree(r.room) : onOcc(r.stay)}>
-              <div className="bar" /><div className="n">{r.room}</div><div className="s">{s}</div>
+      {groupByBlock(db.rooms, (r) => r.room).map(({ block, items, from, to }) => {
+        const bfree = items.filter((r) => r.status === 'free').length;
+        return (
+          <div key={block}>
+            <div className="block-title">
+              Блок {block}
+              <span>{from}–{to} · свободно {bfree} из {items.length}</span>
             </div>
-          );
-        })}
-      </div>
+            <div className="rooms">
+              {items.map((r) => {
+                const cls = r.status === 'free' ? 'free' : r.status === 'occ' ? 'occ' : 'book';
+                const s = r.status === 'free' ? 'свободно' : r.status === 'occ' ? 'занято' : 'бронь';
+                return (
+                  <div key={r.room} className={'room ' + cls} onClick={() => r.status === 'free' ? onFree(r.room) : onOcc(r.stay)}>
+                    <div className="bar" /><div className="n">{r.room}</div><div className="s">{s}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -312,7 +323,7 @@ function CheckinModal({ room, guests, onClose, onSaved }) {
   }
   return (
     <>
-      <h2>Заселить · комната № {room}</h2>
+      <h2>Заселить · блок {Math.floor(room / 100) || 1}, комната № {room}</h2>
       {guests.length === 0
         ? <div className="small">Сначала добавьте гостя в ⚙ Настройки → Гости.</div>
         : <>
