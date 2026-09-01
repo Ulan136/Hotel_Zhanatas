@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
-import { initials, fmt, todayStr, CITIZENSHIPS } from '@/lib/ui';
+import { initials, fmt, todayStr, CITIZENSHIPS, groupByBlock } from '@/lib/ui';
 
 function Dots({ n }) {
   return <div className="step-dots">{[1, 2, 3].map((i) => <i key={i} className={i <= n ? 'on' : ''} />)}</div>;
@@ -164,12 +164,18 @@ export default function GuestPage() {
           <div className="card">
             <Dots n={2} />
             <h2>Выберите комнату</h2>
-            <div className="small">Свободных: {freeRooms.length} из 28. Нажмите нужную.</div>
-            <div className="freeroom-grid">
-              {freeRooms.map((n) => (
-                <div key={n} className={'fr' + (room === n ? ' sel' : '')} onClick={() => setRoom(n)}>№ {n}</div>
-              ))}
-            </div>
+            <div className="small">Свободных комнат: {freeRooms.length}. Нажмите нужную.</div>
+            {freeRooms.length === 0 && <div className="small">Свободных комнат нет — обратитесь на ресепшн.</div>}
+            {groupByBlock(freeRooms).map(({ block, items }) => (
+              <div key={block}>
+                <div className="block-title">Блок {block}<span>свободно {items.length}</span></div>
+                <div className="freeroom-grid">
+                  {items.map((n) => (
+                    <div key={n} className={'fr' + (room === n ? ' sel' : '')} onClick={() => setRoom(n)}>№ {n}</div>
+                  ))}
+                </div>
+              </div>
+            ))}
             <button className="btn" style={{ opacity: room ? 1 : 0.5 }} onClick={() => room ? setStep(3) : alert('Выберите комнату')}>Далее →</button>
           </div>
         )}
@@ -180,7 +186,7 @@ export default function GuestPage() {
             <h2>Дата прибытия</h2>
             <div className="list-item">
               <div className="avatar">{initials(gfio)}</div>
-              <div><div style={{ fontWeight: 700 }}>{gfio}</div><div className="small">Комната № {room}</div></div>
+              <div><div style={{ fontWeight: 700 }}>{gfio}</div><div className="small">Блок {Math.floor(room / 100) || 1} · комната № {room}</div></div>
             </div>
             <label>Прибытие</label>
             <input type="date" value={arrival} onChange={(e) => setArrival(e.target.value)} />
