@@ -81,6 +81,19 @@ td{padding:8px 6px;border-bottom:1px solid var(--line)}
 .demo-badge{display:inline-block;background:#fde68a;color:#92400e;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
 
 
+/* Отчёт заказчика */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.kpi3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.chips-row{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
+.chipbtn{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+.chipbtn.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.roomchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.rchip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:8px;font-size:12px;font-weight:700;border:1px solid var(--line)}
+.rchip i{font-style:normal;font-weight:500;font-size:11px;opacity:.85;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rchip.free{background:var(--freebg);color:var(--incd);border-color:var(--free)}
+.rchip.occ{background:var(--fullbg);color:var(--expd);border-color:var(--full)}
+@media (max-width:360px){.kpi3{grid-template-columns:1fr 1fr}}
+
 /* Крупные кнопки выбора действия на странице гостя */
 .pick2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
 .pick{display:flex;flex-direction:column;align-items:center;gap:2px;padding:18px 8px;border-radius:14px;border:2px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-family:inherit;text-align:center}
