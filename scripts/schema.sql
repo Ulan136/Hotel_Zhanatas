@@ -18,10 +18,16 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS guests (
   id          SERIAL PRIMARY KEY,
   fio         TEXT NOT NULL,
+  iin         TEXT DEFAULT '',
   company     TEXT DEFAULT '',
+  citizenship TEXT DEFAULT '',
   phone       TEXT DEFAULT '',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Миграция для уже созданных баз: добавляем ИИН и гражданство.
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS iin         TEXT DEFAULT '';
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS citizenship TEXT DEFAULT '';
 
 -- Персонал (повар, охрана и т.д.)
 CREATE TABLE IF NOT EXISTS staff (
