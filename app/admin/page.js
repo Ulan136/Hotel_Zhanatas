@@ -19,10 +19,24 @@ function downloadCSV(filename, rows) {
   const csv = rows.map((r) => r.map(csvCell).join(';')).join('\r\n');
   // BOM (﻿) — чтобы Excel правильно открыл кириллицу в UTF-8.
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename; document.body.appendChild(a); a.click();
-  document.body.removeChild(a); URL.revokeObjectURL(url);
+  try {
+    const a = document.createElement('a');
+    if ('download' in a) {
+      const url = URL.createObjectURL(blob);
+      a.href = url; a.download = filename; a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      // Отзываем ссылку с задержкой — иначе часть браузеров обрывает скачивание.
+      setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch {} }, 5000);
+      return;
+    }
+  } catch {}
+  try {
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (w) { setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60000); return; }
+  } catch {}
+  alert('Браузер не дал сохранить файл. Откройте кабинет в обычном браузере (не в режиме приложения) и повторите.');
 }
 
 export default function AdminPage() {
@@ -408,7 +422,7 @@ function FinReport({ db }) {
     f.slice().sort((a, b) => String(a.date).localeCompare(String(b.date))).forEach((x) => {
       rows.push([String(x.date).slice(0, 10), x.type === 'income' ? 'Доход' : 'Расход', x.category || '', x.subcategory || '', Math.round(+x.amount || 0), x.note || '']);
     });
-    downloadCSV('medina-операции-' + todayStr() + '.csv', rows);
+    downloadCSV('medina-operations-' + todayStr() + '.csv', rows);
   }
   function exportSummary() {
     const rows = [['Месяц', 'Доход', 'Расход', 'Остаток']];
@@ -417,7 +431,7 @@ function FinReport({ db }) {
       rows.push([monthName(m), Math.round(r.inc), Math.round(r.exp), Math.round(r.inc - r.exp)]);
     });
     rows.push(['Итого', Math.round(inc), Math.round(exp), Math.round(inc - exp)]);
-    downloadCSV('medina-сводка-' + todayStr() + '.csv', rows);
+    downloadCSV('medina-summary-' + todayStr() + '.csv', rows);
   }
 
   return (
