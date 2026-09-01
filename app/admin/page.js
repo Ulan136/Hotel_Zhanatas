@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react';
 import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
-import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS, groupByBlock } from '@/lib/ui';
+import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS,
+         DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock } from '@/lib/ui';
 
 const STAFF_ROLES = ['Повар', 'Помощник повара', 'Ресепшн', 'Уборка', 'Охрана', 'Другое'];
 const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [] };
@@ -855,17 +856,17 @@ function GuestModal({ guest, onClose, onSaved }) {
   const known = CITIZENSHIPS.includes(guest?.citizenship || '');
   const [fio, setFio] = useState(guest?.fio || '');
   const [iin, setIin] = useState(guest?.iin || '');
-  const [company, setCompany] = useState(guest?.company ?? 'Инжиниринг');
+  const [company, setCompany] = useState(guest?.company ?? DEFAULT_COMPANY);
   const [cit, setCit] = useState(guest?.citizenship ? (known ? guest.citizenship : 'Другое') : 'Казахстан');
   const [citOther, setCitOther] = useState(guest?.citizenship && !known ? guest.citizenship : '');
-  const [phone, setPhone] = useState(guest?.phone || '');
+  const [phone, setPhone] = useState(guest?.phone ? formatPhone(guest.phone) : '+7 ');
   const [busy, setBusy] = useState(false);
   async function submit() {
     if (!fio.trim()) return alert('Укажите ФИО');
     if (!iin.trim()) return alert('Укажите ИИН');
     const citizenship = cit === 'Другое' ? citOther.trim() : cit;
     if (!citizenship) return alert('Укажите гражданство');
-    const payload = { fio: fio.trim(), iin: iin.trim(), company: company.trim(), citizenship, phone: phone.trim() };
+    const payload = { fio: fio.trim(), iin: iin.trim(), company: company.trim(), citizenship, phone: cleanPhone(phone) };
     setBusy(true);
     try {
       const r = edit ? await api('updateGuest', { id: guest.id, ...payload }) : await api('addGuest', payload);
@@ -883,7 +884,10 @@ function GuestModal({ guest, onClose, onSaved }) {
         {CITIZENSHIPS.map((c) => <option key={c} value={c}>{c}</option>)}
       </select>
       {cit === 'Другое' && <input value={citOther} onChange={(e) => setCitOther(e.target.value)} placeholder="укажите страну" />}
-      <label>Телефон</label><input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" />
+      <label>Телефон</label>
+      <input value={phone} inputMode="tel" placeholder={PHONE_PLACEHOLDER}
+        onChange={(e) => setPhone(formatPhone(e.target.value))}
+        onFocus={(e) => { if (!e.target.value) setPhone('+7 '); }} />
       <button className="btn" disabled={busy} onClick={submit}>Сохранить</button>
       <button className="btn sec" onClick={onClose}>Отмена</button>
     </>
