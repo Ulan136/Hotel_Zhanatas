@@ -127,10 +127,10 @@ export default function ReportPage() {
       ['MEDINA — отчёт о проживании (вахтовый метод)'],
       ['Период', period],
       ['Проживаний в отчёте', list.length, 'человеко-суток', totalNights],
-      ...(showRooms ? [['Свободно комнат', freeRooms.length, 'занято', busyRooms.size]] : []),
+      ['Свободно комнат', freeRooms.length, 'Занято комнат', busyRooms.size, 'Всего', rooms.length],
       [],
     ];
-    downloadCSV(`MEDINA_отчёт_${from}_${to}.csv`, [...meta, head, ...body]);
+    downloadCSV(`MEDINA_report_${from}_${to}.csv`, [...meta, head, ...body]);
   }
 
   if (!authed) {
@@ -216,6 +216,19 @@ export default function ReportPage() {
               <div className="l" style={{ color: 'var(--warnd)' }}>человеко-суток</div>
             </div>
           </div>
+
+          {/* Занятость фонда — цифры показываем всегда, даже когда номера комнат скрыты */}
+          <div className="two" style={{ marginTop: 8 }}>
+            <div className="tile" style={{ background: 'var(--freebg)' }}>
+              <div className="v" style={{ fontSize: 20, color: 'var(--incd)' }}>{freeRooms.length}</div>
+              <div className="l" style={{ color: 'var(--incd)' }}>свободно комнат</div>
+            </div>
+            <div className="tile" style={{ background: 'var(--fullbg)' }}>
+              <div className="v" style={{ fontSize: 20, color: 'var(--expd)' }}>{busyRooms.size}</div>
+              <div className="l" style={{ color: 'var(--expd)' }}>занято комнат</div>
+            </div>
+          </div>
+          <div className="small" style={{ marginTop: 6 }}>Всего комнат в гостинице: {rooms.length}.</div>
         </div>
 
         {/* --- Поиск и таблица --- */}
