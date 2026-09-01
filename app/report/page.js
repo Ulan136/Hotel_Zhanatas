@@ -8,16 +8,33 @@ import { fuzzyScore } from '@/lib/fuzzy';
 
 const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
 
-// Выгрузка в Excel: CSV с точкой с запятой и BOM — Excel открывает такой файл сразу.
+/* Выгрузка в Excel: CSV с точкой с запятой и BOM — Excel открывает такой файл сразу.
+   Скачивание сделано устойчиво: ссылку отзываем с задержкой (иначе часть браузеров
+   обрывает загрузку), а если сохранить не дали — открываем файл в новой вкладке. */
 function downloadCSV(filename, rows) {
   const cell = (v) => { v = String(v == null ? '' : v); return /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const csv = rows.map((r) => r.map(cell).join(';')).join('\r\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+
+  try {
+    const a = document.createElement('a');
+    if ('download' in a) {
+      const url = URL.createObjectURL(blob);
+      a.href = url; a.download = filename; a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch {} }, 5000);
+      return;
+    }
+  } catch {}
+
+  try {
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (w) { setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60000); return; }
+  } catch {}
+
+  alert('Браузер не дал сохранить файл. Откройте отчёт в обычном браузере (не в режиме приложения) и повторите.');
 }
 
 function statusText(s) {
