@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
-import { initials, fmt, todayStr, nightsNow, CITIZENSHIPS, groupByBlock, blockOf } from '@/lib/ui';
+import { initials, fmt, todayStr, nightsNow, CITIZENSHIPS, DEFAULT_COMPANY,
+         PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf } from '@/lib/ui';
 import { fuzzySearch } from '@/lib/fuzzy';
 
 /* Экраны:
@@ -67,10 +68,10 @@ function GuestForm({ init, title, onCancel, onDone }) {
   const known = CITIZENSHIPS.includes(init?.citizenship || '');
   const [fio, setFio] = useState(init?.fio || '');
   const [iin, setIin] = useState(init?.iin || '');
-  const [company, setCompany] = useState(init?.company ?? 'Инжиниринг');
+  const [company, setCompany] = useState(init?.company ?? DEFAULT_COMPANY);
   const [cit, setCit] = useState(init?.citizenship ? (known ? init.citizenship : 'Другое') : 'Казахстан');
   const [citOther, setCitOther] = useState(init?.citizenship && !known ? init.citizenship : '');
-  const [phone, setPhone] = useState(init?.phone || '');
+  const [phone, setPhone] = useState(init?.phone ? formatPhone(init.phone) : '+7 ');
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -78,7 +79,7 @@ function GuestForm({ init, title, onCancel, onDone }) {
     if (!iin.trim()) return alert('Укажите ИИН');
     const citizenship = cit === 'Другое' ? citOther.trim() : cit;
     if (!citizenship) return alert('Укажите гражданство');
-    const payload = { fio: fio.trim(), iin: iin.trim(), company: company.trim(), citizenship, phone: phone.trim() };
+    const payload = { fio: fio.trim(), iin: iin.trim(), company: company.trim(), citizenship, phone: cleanPhone(phone) };
     setBusy(true);
     try {
       const r = init?.id
@@ -92,8 +93,8 @@ function GuestForm({ init, title, onCancel, onDone }) {
   return (
     <div className="card">
       <h2>{title}</h2>
-      <label>Фамилия Имя Отчество</label>
-      <input value={fio} onChange={(e) => setFio(e.target.value)} placeholder="Иванов Иван Иванович" />
+      <label>ФИО</label>
+      <input value={fio} onChange={(e) => setFio(e.target.value)} />
 
       <label>ИИН</label>
       <input value={iin} onChange={(e) => setIin(e.target.value)} inputMode="numeric" placeholder="12 цифр" />
@@ -108,7 +109,9 @@ function GuestForm({ init, title, onCancel, onDone }) {
       {cit === 'Другое' && <input value={citOther} onChange={(e) => setCitOther(e.target.value)} placeholder="укажите страну" />}
 
       <label>Телефон</label>
-      <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="+7 ___ ___ __ __" />
+      <input value={phone} inputMode="tel" placeholder={PHONE_PLACEHOLDER}
+        onChange={(e) => setPhone(formatPhone(e.target.value))}
+        onFocus={(e) => { if (!e.target.value) setPhone('+7 '); }} />
 
       <button className="btn" disabled={busy} onClick={submit}>Далее — выбрать комнату →</button>
       <button className="link" style={{ display: 'block', textAlign: 'center', margin: '10px auto 0' }} onClick={onCancel}>← назад</button>
