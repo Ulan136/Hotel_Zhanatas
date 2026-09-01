@@ -4,7 +4,7 @@ import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } 
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { downloadXlsx } from '@/lib/xlsx';
 import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS,
-         DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock } from '@/lib/ui';
+         DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf } from '@/lib/ui';
 
 const STAFF_ROLES = ['Повар', 'Помощник повара', 'Ресепшн', 'Уборка', 'Охрана', 'Другое'];
 const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [] };
@@ -119,7 +119,12 @@ export default function AdminPage() {
 
       <Modal open={!!modal} onClose={closeModal}>
         {modal?.type === 'checkin' && <CheckinModal room={modal.room} guests={db.guests} onClose={closeModal} onSaved={() => afterSave()} />}
-        {modal?.type === 'room' && <RoomModal stay={modal.stay} onClose={closeModal} onCheckout={async (id) => { await withBusy(() => api('checkout', { id })); await afterSave(); }} />}
+        {modal?.type === 'room' && <RoomModal stay={modal.stay} onClose={closeModal}
+          onCheckout={async (id, departure) => {
+            const r = await withBusy(() => api('checkout', { id, departure }));
+            if (!r.ok) return alert(r.error || 'Ошибка');
+            await afterSave();
+          }} />}
         {modal?.type === 'fin' && <FinModal cats={db.categories} onClose={closeModal} onSaved={() => afterSave()} onNeedCats={() => { closeModal(); openSettings('cats'); }} />}
         {modal?.type === 'shift' && <ShiftModal onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'guest' && <GuestModal guest={modal.data} onClose={closeModal} onSaved={() => afterSave('guests')} />}
@@ -274,9 +279,20 @@ function RoomsTab({ db, onFree, onOcc }) {
 }
 
 function RoomModal({ stay: s, onClose, onCheckout }) {
+  // Дата выбытия: по умолчанию сегодня, но её можно изменить — для поздних выселений.
+  const [departure, setDeparture] = useState(todayStr());
+  const arrival = String(s.arrival || '').slice(0, 10);
+
+  function submit() {
+    if (!departure) return alert('Укажите дату выбытия');
+    if (arrival && departure < arrival) return alert('Дата выбытия раньше даты прибытия. Проверьте дату.');
+    if (!confirm(`Выселить ${s.fio} из комнаты №${s.room}?\n\nДата выбытия: ${fmt(departure)}.`)) return;
+    onCheckout(s.id, departure);
+  }
+
   return (
     <>
-      <h2>Комната № {s.room}</h2>
+      <h2>Блок {blockOf(s.room)} · комната № {s.room}</h2>
       <div className="list-item">
         <div className="avatar">{initials(s.fio)}</div>
         <div style={{ flex: 1 }}><div style={{ fontWeight: 700 }}>{s.fio}</div><div className="small">{s.source || ''}</div></div>
@@ -284,14 +300,17 @@ function RoomModal({ stay: s, onClose, onCheckout }) {
       </div>
       <div className="tiles">
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Прибытие</div><div className="v" style={{ fontSize: 16, color: 'var(--incd)' }}>{fmt(s.arrival)}</div></div>
-        <div className="tile" style={{ background: 'var(--partbg)' }}><div className="l" style={{ color: 'var(--warnd)' }}>Суток</div><div className="v" style={{ fontSize: 16, color: 'var(--warnd)' }}>{nightsNow(s.arrival, s.departure)}</div></div>
+        <div className="tile" style={{ background: 'var(--partbg)' }}><div className="l" style={{ color: 'var(--warnd)' }}>Суток</div><div className="v" style={{ fontSize: 16, color: 'var(--warnd)' }}>{nightsNow(s.arrival, departure)}</div></div>
       </div>
-      <div className="small" style={{ margin: '10px 0' }}>
-        {s.departure
-          ? <>Выбытие: <b>{fmt(s.departure)}</b></>
-          : <>Дата выбытия проставится автоматически при выселении.</>}
+
+      <label>Дата выбытия</label>
+      <input type="date" value={departure} onChange={(e) => setDeparture(e.target.value)} />
+      <div className="small" style={{ marginTop: 6 }}>
+        Подставлен сегодняшний день — при необходимости выберите другую дату.
+        {departure !== todayStr() && <> <button className="link" onClick={() => setDeparture(todayStr())}>вернуть сегодня</button></>}
       </div>
-      <button className="btn red" onClick={() => onCheckout(s.id)}>Отметить выбытие</button>
+
+      <button className="btn red" onClick={submit}>✓ Выселить</button>
       <button className="btn sec" onClick={onClose}>Закрыть</button>
     </>
   );
