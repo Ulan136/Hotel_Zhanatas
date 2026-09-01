@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { api, getSess, setSess as saveSess, clearSess } from '@/lib/client';
+import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
-import { initials, fmt, timeHM, money, nights, todayStr, monthStart } from '@/lib/ui';
+import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS } from '@/lib/ui';
 
 const STAFF_ROLES = ['Повар', 'Помощник повара', 'Ресепшн', 'Уборка', 'Охрана', 'Другое'];
 const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [] };
@@ -52,7 +52,10 @@ export default function AdminPage() {
     try { await withBusy(reload); setView('app'); }
     catch { alert('Нет связи с базой.'); }
   }
-  function logout() { clearSess(); setSess(null); setView('login'); setScreen('tabs'); }
+  function logout(forget) {
+    if (forget) forgetMe(); else clearSess();
+    setSess(null); setView('login'); setScreen('tabs');
+  }
 
   const closeModal = () => setModal(null);
   async function afterSave(segAfter) {
@@ -74,7 +77,7 @@ export default function AdminPage() {
 
   if (view === 'reg') return (
     <Frame sub="регистрация администратора">
-      <RegForm onDone={(s) => { saveSess(s); setSess(s); openApp(s); }} setBusy={setBusy} />
+      <RegForm onDone={(s) => { saveSess(s, true); setSess(s); openApp(s); }} setBusy={setBusy} />
       <Busy show={busy} />
     </Frame>
   );
@@ -82,7 +85,7 @@ export default function AdminPage() {
   if (view === 'login') return (
     <Frame sub="вход">
       <LoginForm
-        onDone={(s) => { saveSess(s); setSess(s); openApp(s); }}
+        onDone={(s, remember) => { saveSess(s, remember); setSess(s); openApp(s); }}
         setBusy={setBusy}
       />
       <Busy show={busy} />
@@ -94,7 +97,7 @@ export default function AdminPage() {
     <span>
       {sess?.role === 'admin' && <button className="link" style={{ color: '#fff', marginRight: 12 }} onClick={() => setScreen('uchet')}>📊 Учёт</button>}
       <button className="link" style={{ color: '#fff', marginRight: 12 }} onClick={() => openSettings()}>⚙ Настройки</button>
-      <button className="link" style={{ color: '#fff' }} onClick={logout}>выйти</button>
+      <button className="link" style={{ color: '#fff' }} onClick={() => logout(false)}>выйти</button>
     </span>
   );
 
@@ -196,12 +199,16 @@ function RegForm({ onDone, setBusy }) {
 
 function LoginForm({ onDone, setBusy }) {
   const [login, setLogin] = useState(''); const [pass, setPass] = useState('');
+  const [remember, setRemember] = useState(true);
+  // Подставляем запомненный логин (пароль не хранится).
+  useEffect(() => { const l = getLastLogin(); if (l) setLogin(l); }, []);
   async function submit() {
+    if (!login.trim() || !pass) return alert('Введите логин и пароль');
     setBusy(true);
     try {
-      const r = await api('login', { login, pass });
+      const r = await api('login', { login: login.trim(), pass });
       if (!r.ok || r.user.role === 'factory') return alert('Неверный логин или пароль');
-      onDone({ name: r.user.name, login: r.user.login, role: r.user.role });
+      onDone({ name: r.user.name, login: r.user.login, role: r.user.role }, remember);
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
   async function addStaff() {
@@ -215,9 +222,20 @@ function LoginForm({ onDone, setBusy }) {
   return (
     <div className="card">
       <h2>Вход</h2>
-      <label>Логин</label><input value={login} onChange={(e) => setLogin(e.target.value)} />
-      <label>Пароль</label><input type="password" value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} />
+      <label>Логин</label>
+      <input value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="username" name="username" />
+      <label>Пароль</label>
+      <input type="password" value={pass} onChange={(e) => setPass(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()} autoComplete="current-password" name="password" />
+      <label className="remember">
+        <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+        <span>Запомнить меня на этом устройстве</span>
+      </label>
       <button className="btn" onClick={submit}>Войти</button>
+      {login && (
+        <button className="link" style={{ display: 'block', margin: '10px auto 0', fontSize: 13 }}
+          onClick={() => { forgetMe(); setLogin(''); setPass(''); }}>Это не я — забыть логин</button>
+      )}
       <button className="link" style={{ display: 'block', marginTop: 12 }} onClick={addStaff}>+ Добавить сотрудника (ресепшн)</button>
     </div>
   );
@@ -265,9 +283,13 @@ function RoomModal({ stay: s, onClose, onCheckout }) {
       </div>
       <div className="tiles">
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Прибытие</div><div className="v" style={{ fontSize: 16, color: 'var(--incd)' }}>{fmt(s.arrival)}</div></div>
-        <div className="tile" style={{ background: 'var(--partbg)' }}><div className="l" style={{ color: 'var(--warnd)' }}>Выбытие</div><div className="v" style={{ fontSize: 16, color: 'var(--warnd)' }}>{fmt(s.departure)}</div></div>
+        <div className="tile" style={{ background: 'var(--partbg)' }}><div className="l" style={{ color: 'var(--warnd)' }}>Суток</div><div className="v" style={{ fontSize: 16, color: 'var(--warnd)' }}>{nightsNow(s.arrival, s.departure)}</div></div>
       </div>
-      <div className="small" style={{ margin: '10px 0' }}>Суток: <b>{nights(s.arrival, s.departure)}</b></div>
+      <div className="small" style={{ margin: '10px 0' }}>
+        {s.departure
+          ? <>Выбытие: <b>{fmt(s.departure)}</b></>
+          : <>Дата выбытия проставится автоматически при выселении.</>}
+      </div>
       <button className="btn red" onClick={() => onCheckout(s.id)}>Отметить выбытие</button>
       <button className="btn sec" onClick={onClose}>Закрыть</button>
     </>
@@ -277,14 +299,13 @@ function RoomModal({ stay: s, onClose, onCheckout }) {
 function CheckinModal({ room, guests, onClose, onSaved }) {
   const [gid, setGid] = useState(guests[0]?.id ?? '');
   const [arrival, setArrival] = useState(todayStr());
-  const [departure, setDeparture] = useState('');
   const [busy, setBusy] = useState(false);
   async function submit() {
-    if (!arrival || !departure) return alert('Укажите период');
+    if (!arrival) return alert('Укажите дату прибытия');
     const g = guests.find((x) => String(x.id) === String(gid));
     setBusy(true);
     try {
-      const r = await api('checkin', { guestId: gid, fio: g?.fio, room, arrival, departure, source: 'ресепшн' });
+      const r = await api('checkin', { guestId: gid, fio: g?.fio, room, arrival, source: 'ресепшн' });
       if (!r.ok) return alert(r.error || 'Ошибка');
       onSaved();
     } catch (e) { alert(e.message); } finally { setBusy(false); }
@@ -300,7 +321,7 @@ function CheckinModal({ room, guests, onClose, onSaved }) {
               {guests.map((g) => <option key={g.id} value={g.id}>{g.fio}</option>)}
             </select>
             <label>Прибытие</label><input type="date" value={arrival} onChange={(e) => setArrival(e.target.value)} />
-            <label>Выбытие</label><input type="date" value={departure} onChange={(e) => setDeparture(e.target.value)} />
+            <div className="small" style={{ marginTop: 6 }}>Дата выбытия не указывается — она проставится при выселении.</div>
             <button className="btn" disabled={busy} onClick={submit}>Заселить</button>
           </>}
       <button className="btn sec" onClick={onClose}>Отмена</button>
@@ -643,7 +664,7 @@ function ShiftModal({ onClose, onSaved }) {
 /* ===================== Report tab ===================== */
 function ReportTab({ db }) {
   const rows = db.stays.slice().sort((a, b) => (a.arrival < b.arrival ? 1 : -1));
-  const total = rows.reduce((a, s) => { const n = nights(s.arrival, s.departure); return a + (typeof n === 'number' ? n : 0); }, 0);
+  const total = rows.reduce((a, s) => { const n = nightsNow(s.arrival, s.departure); return a + (typeof n === 'number' ? n : 0); }, 0);
   return (
     <>
       <div className="card noprint">
@@ -653,13 +674,13 @@ function ReportTab({ db }) {
       </div>
       <div className="card">
         <div style={{ fontWeight: 700 }}>Отчёт о проживании (вахтовый метод)</div>
-        <div className="small" style={{ marginBottom: 10 }}>Всего проживаний: {rows.length} · человеко-суток: {total}</div>
+        <div className="small" style={{ marginBottom: 10 }}>Всего проживаний: {rows.length} · человеко-суток: {total} <span style={{ opacity: .7 }}>(незакрытые — по сегодняшний день)</span></div>
         <div style={{ overflow: 'auto' }}>
           <table><tbody>
             <tr><th>ФИО</th><th>Комн.</th><th>Прибытие</th><th>Выбытие</th><th>Сут.</th><th>Статус</th></tr>
             {rows.length ? rows.map((s) => {
               const st = s.status === 'closed' ? 'закрыт' : s.status === 'booked' ? 'бронь' : 'на смене';
-              return <tr key={s.id}><td>{s.fio}</td><td>№{s.room}</td><td>{fmt(s.arrival)}</td><td>{fmt(s.departure)}</td><td>{nights(s.arrival, s.departure)}</td><td>{st}</td></tr>;
+              return <tr key={s.id}><td>{s.fio}</td><td>№{s.room}</td><td>{fmt(s.arrival)}</td><td>{s.departure ? fmt(s.departure) : '—'}</td><td>{nightsNow(s.arrival, s.departure)}</td><td>{st}</td></tr>;
             }) : <tr><td colSpan={6} className="small">Нет заселений.</td></tr>}
           </tbody></table>
         </div>
@@ -749,7 +770,7 @@ function Settings({ db, seg, sess, users, setSeg, setModal, onDelete, backToApp 
             {db.guests.map((x) => {
               const inr = db.stays.find((s) => String(s.guestId) === String(x.id) && s.status !== 'closed');
               return <Row key={x.id} av={initials(x.fio)} title={x.fio}
-                sub={<>{x.company || ''}{x.phone ? ' · ' + x.phone : ''}{inr ? <> · <b style={{ color: 'var(--incd)' }}>№{inr.room}</b></> : ''}</>}
+                sub={<>{[x.iin && 'ИИН ' + x.iin, x.company, x.citizenship, x.phone].filter(Boolean).join(' · ')}{inr ? <> · <b style={{ color: 'var(--incd)' }}>№{inr.room}</b></> : ''}</>}
                 onEdit={() => setModal({ type: 'guest', data: x })}
                 onDel={() => onDelete('guest', x.id)} />;
             })}
@@ -820,15 +841,23 @@ function CatsList({ db, setModal, onDelete }) {
 /* ---- Settings modals ---- */
 function GuestModal({ guest, onClose, onSaved }) {
   const edit = !!guest;
+  const known = CITIZENSHIPS.includes(guest?.citizenship || '');
   const [fio, setFio] = useState(guest?.fio || '');
+  const [iin, setIin] = useState(guest?.iin || '');
   const [company, setCompany] = useState(guest?.company ?? 'Инжиниринг');
+  const [cit, setCit] = useState(guest?.citizenship ? (known ? guest.citizenship : 'Другое') : 'Казахстан');
+  const [citOther, setCitOther] = useState(guest?.citizenship && !known ? guest.citizenship : '');
   const [phone, setPhone] = useState(guest?.phone || '');
   const [busy, setBusy] = useState(false);
   async function submit() {
     if (!fio.trim()) return alert('Укажите ФИО');
+    if (!iin.trim()) return alert('Укажите ИИН');
+    const citizenship = cit === 'Другое' ? citOther.trim() : cit;
+    if (!citizenship) return alert('Укажите гражданство');
+    const payload = { fio: fio.trim(), iin: iin.trim(), company: company.trim(), citizenship, phone: phone.trim() };
     setBusy(true);
     try {
-      const r = edit ? await api('updateGuest', { id: guest.id, fio, company, phone }) : await api('addGuest', { fio, company, phone });
+      const r = edit ? await api('updateGuest', { id: guest.id, ...payload }) : await api('addGuest', payload);
       if (!r.ok) return alert(r.error || 'Ошибка'); onSaved();
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
@@ -836,8 +865,14 @@ function GuestModal({ guest, onClose, onSaved }) {
     <>
       <h2>{edit ? 'Изменить гостя' : 'Новый гость'}</h2>
       <label>ФИО</label><input value={fio} onChange={(e) => setFio(e.target.value)} />
+      <label>ИИН</label><input value={iin} onChange={(e) => setIin(e.target.value)} inputMode="numeric" placeholder="12 цифр" />
       <label>Компания / вахта</label><input value={company} onChange={(e) => setCompany(e.target.value)} />
-      <label>Телефон</label><input value={phone} onChange={(e) => setPhone(e.target.value)} />
+      <label>Гражданство</label>
+      <select value={cit} onChange={(e) => setCit(e.target.value)}>
+        {CITIZENSHIPS.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      {cit === 'Другое' && <input value={citOther} onChange={(e) => setCitOther(e.target.value)} placeholder="укажите страну" />}
+      <label>Телефон</label><input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" />
       <button className="btn" disabled={busy} onClick={submit}>Сохранить</button>
       <button className="btn sec" onClick={onClose}>Отмена</button>
     </>
