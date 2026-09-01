@@ -227,6 +227,24 @@ const handlers = {
     return ok({ ok: true });
   },
 
+  /* ---------- Отчёт заказчика ---------- */
+  // Проживания вместе с данными гостя (ИИН, телефон) и списком комнат — для поиска и занятости.
+  async report() {
+    const [rows, roomRows] = await Promise.all([
+      sql`SELECT s.id, s.fio, s.room, s.arrival::text AS arrival, s.departure::text AS departure,
+                 s.status, s.source,
+                 COALESCE(g.iin, '')         AS iin,
+                 COALESCE(g.company, '')     AS company,
+                 COALESCE(g.citizenship, '') AS citizenship,
+                 COALESCE(g.phone, '')       AS phone
+            FROM stays s
+            LEFT JOIN guests g ON g.id = s.guest_id
+           ORDER BY s.arrival DESC, s.id DESC`,
+      sql`SELECT room FROM rooms ORDER BY room`,
+    ]);
+    return ok({ rows, rooms: roomRows.map((r) => r.room) });
+  },
+
   /* ---------- Смены ---------- */
   async shifts() {
     const rows = await sql`SELECT id, fio, role, sdate::text AS date, shift, hours::float8 AS hours,
