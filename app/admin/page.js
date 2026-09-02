@@ -4,10 +4,11 @@ import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } 
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { downloadXlsx } from '@/lib/xlsx';
 import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS,
-         DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf } from '@/lib/ui';
+         DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
+         DEFAULT_GUARD_RATES, guardEarned } from '@/lib/ui';
 
 const STAFF_ROLES = ['Повар', 'Помощник повара', 'Ресепшн', 'Уборка', 'Охрана', 'Другое'];
-const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [] };
+const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [], payments: [], settings: {} };
 const topCats = (cats, t) => cats.filter((c) => c.type === t && !c.parent);
 const subCats = (cats, pid) => cats.filter((c) => String(c.parent || '') === String(pid));
 
@@ -103,7 +104,11 @@ export default function AdminPage() {
           : <>
               {tab === 'rooms' && <RoomsTab db={db} onFree={(n) => setModal({ type: 'checkin', room: n })} onOcc={(stay) => setModal({ type: 'room', stay })} />}
               {tab === 'fin' && <FinTab db={db} onAdd={() => setModal({ type: 'fin' })} />}
-              {tab === 'shifts' && <ShiftsTab db={db} onAdd={() => setModal({ type: 'shift' })} />}
+              {tab === 'shifts' && <ShiftsTab db={db}
+                onAdd={() => setModal({ type: 'shift' })}
+                onPay={(row) => setModal({ type: 'pay', data: row })}
+                onDelPayment={(id) => handleDelete('payment', id)}
+                onReload={reload} />}
             </>}
       </div>
 
@@ -127,6 +132,7 @@ export default function AdminPage() {
           }} />}
         {modal?.type === 'fin' && <FinModal cats={db.categories} onClose={closeModal} onSaved={() => afterSave()} onNeedCats={() => { closeModal(); openSettings('cats'); }} />}
         {modal?.type === 'shift' && <ShiftModal onClose={closeModal} onSaved={() => afterSave()} />}
+        {modal?.type === 'pay' && <PayModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'guest' && <GuestModal guest={modal.data} onClose={closeModal} onSaved={() => afterSave('guests')} />}
         {modal?.type === 'staff' && <StaffModal worker={modal.data} onClose={closeModal} onSaved={() => afterSave('staff')} />}
         {modal?.type === 'cat' && <CatModal cat={modal.data} parentId={modal.parentId} ctype={modal.ctype} onClose={closeModal} onSaved={() => afterSave('cats')} />}
@@ -150,6 +156,9 @@ export default function AdminPage() {
     } else if (kind === 'cat') {
       if (!confirm('Удалить категорию?')) return;
       await withBusy(() => api('deleteCategory', { id: arg })); await reload();
+    } else if (kind === 'payment') {
+      if (!confirm('Удалить эту выплату? Долг пересчитается.')) return;
+      await withBusy(() => api('deletePayment', { id: arg })); await reload();
     } else if (kind === 'user') {
       if (arg === sess.login) return alert('Нельзя удалить пользователя, под которым вы вошли.');
       if (!confirm('Удалить пользователя «' + arg + '»?')) return;
@@ -345,6 +354,206 @@ function CheckinModal({ room, guests, onClose, onSaved }) {
             <button className="btn" disabled={busy} onClick={submit}>Заселить</button>
           </>}
       <button className="btn sec" onClick={onClose}>Отмена</button>
+    </>
+  );
+}
+
+
+/* ===================== Оплата охраны =====================
+   Начисляем за ДЕНЬ выхода: будни и выходные по разным ставкам.
+   Долг считаем за всё время: начислено минус выплачено, поэтому
+   частичная оплата и недоплата за прошлый месяц не теряются. */
+function guardRates(settings) {
+  const n = (v, d) => { const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : d; };
+  return {
+    weekday: n(settings?.guard_rate_weekday, DEFAULT_GUARD_RATES.weekday),
+    weekend: n(settings?.guard_rate_weekend, DEFAULT_GUARD_RATES.weekend),
+  };
+}
+
+function GuardPay({ db, onPay, onDelPayment, onReload }) {
+  const saved = guardRates(db.settings);
+  const [wd, setWd] = useState(String(saved.weekday));
+  const [we, setWe] = useState(String(saved.weekend));
+  const [editRates, setEditRates] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const rates = saved;
+  const guardShifts = (db.shifts || []).filter((x) => x.role === 'Охрана');
+  const names = new Set([
+    ...(db.staff || []).filter((x) => x.role === 'Охрана').map((x) => x.fio),
+    ...guardShifts.map((x) => x.fio),
+  ]);
+
+  const rows = [...names].filter(Boolean).sort((a, b) => a.localeCompare(b)).map((fio) => {
+    const e = guardEarned(guardShifts.filter((x) => x.fio === fio), rates);
+    const paid = (db.payments || []).filter((p) => p.fio === fio).reduce((a, p) => a + (+p.amount || 0), 0);
+    return { fio, ...e, paid, debt: e.amount - paid };
+  });
+
+  const totalEarned = rows.reduce((a, r) => a + r.amount, 0);
+  const totalPaid = rows.reduce((a, r) => a + r.paid, 0);
+  const totalDebt = totalEarned - totalPaid;
+
+  async function saveRates() {
+    const a = Number(wd), b = Number(we);
+    if (!Number.isFinite(a) || a < 0 || !Number.isFinite(b) || b < 0) return alert('Ставка должна быть числом');
+    setBusy(true);
+    try {
+      await api('setSetting', { key: 'guard_rate_weekday', value: String(Math.round(a)) });
+      await api('setSetting', { key: 'guard_rate_weekend', value: String(Math.round(b)) });
+      await onReload?.();
+      setEditRates(false);
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+
+  const recent = (db.payments || []).slice(0, 12);
+
+  return (
+    <div className="card">
+      <h2 style={{ fontSize: 15 }}>Оплата охраны</h2>
+      <div className="small">
+        Будни {money(rates.weekday)} за день · суббота и воскресенье {money(rates.weekend)} за день.
+        {' '}<button className="link" onClick={() => setEditRates(!editRates)}>{editRates ? 'скрыть' : 'изменить ставки'}</button>
+      </div>
+
+      {editRates && (
+        <div style={{ marginTop: 8 }}>
+          <div className="two">
+            <div><label>Будни (пн–пт), ₸</label><input inputMode="numeric" value={wd} onChange={(e) => setWd(e.target.value.replace(/\D/g, ''))} /></div>
+            <div><label>Выходные (сб, вс), ₸</label><input inputMode="numeric" value={we} onChange={(e) => setWe(e.target.value.replace(/\D/g, ''))} /></div>
+          </div>
+          <button className="btn" disabled={busy} onClick={saveRates}>Сохранить ставки</button>
+        </div>
+      )}
+
+      <div className="kpi3" style={{ marginTop: 12 }}>
+        <div className="tile" style={{ background: 'var(--eef)' }}>
+          <div className="v" style={{ fontSize: 16, color: 'var(--primd)' }}>{money(totalEarned)}</div>
+          <div className="l" style={{ color: 'var(--primd)' }}>начислено</div>
+        </div>
+        <div className="tile" style={{ background: 'var(--freebg)' }}>
+          <div className="v" style={{ fontSize: 16, color: 'var(--incd)' }}>{money(totalPaid)}</div>
+          <div className="l" style={{ color: 'var(--incd)' }}>выплачено</div>
+        </div>
+        <div className="tile" style={{ background: totalDebt > 0 ? 'var(--fullbg)' : 'var(--freebg)' }}>
+          <div className="v" style={{ fontSize: 16, color: totalDebt > 0 ? 'var(--expd)' : 'var(--incd)' }}>{money(totalDebt)}</div>
+          <div className="l" style={{ color: totalDebt > 0 ? 'var(--expd)' : 'var(--incd)' }}>к выплате</div>
+        </div>
+      </div>
+
+      {rows.length ? (
+        <div style={{ marginTop: 12 }}>
+          {rows.map((r) => (
+            <div key={r.fio} className="list-item" style={{ alignItems: 'flex-start' }}>
+              <div className="avatar">{initials(r.fio)}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600 }}>{r.fio}</div>
+                <div className="small">
+                  {r.days} дн. ({r.weekday} будн. + {r.weekend} вых.) · начислено {money(r.amount)}
+                </div>
+                <div className="small">
+                  выплачено <b style={{ color: 'var(--incd)' }}>{money(r.paid)}</b>
+                  {' · '}
+                  {r.debt > 0
+                    ? <>долг <b style={{ color: 'var(--expd)' }}>{money(r.debt)}</b></>
+                    : r.debt < 0
+                      ? <>переплата <b style={{ color: 'var(--warnd)' }}>{money(-r.debt)}</b></>
+                      : <b style={{ color: 'var(--incd)' }}>рассчитан</b>}
+                </div>
+              </div>
+              <button className={'btn ' + (r.debt > 0 ? '' : 'sec')}
+                style={{ margin: 0, width: 'auto', padding: '8px 12px', fontSize: 13 }}
+                onClick={() => onPay(r)}>Оплатить</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="small" style={{ marginTop: 10 }}>
+          Охранников нет. Заведите их в «⚙ Настройки → Работники» с должностью «Охрана».
+        </div>
+      )}
+
+      {recent.length > 0 && (
+        <>
+          <div className="block-title">История выплат<span>последние {recent.length}</span></div>
+          <div style={{ overflow: 'auto' }}>
+            <table><tbody>
+              <tr><th>Дата</th><th>Кому</th><th>Сумма</th><th>Комментарий</th><th></th></tr>
+              {recent.map((p) => (
+                <tr key={p.id}>
+                  <td>{fmt(p.date)}</td>
+                  <td style={{ fontWeight: 600 }}>{p.fio}</td>
+                  <td style={{ color: 'var(--incd)', fontWeight: 700 }}>{money(p.amount)}</td>
+                  <td>{p.note || ''}</td>
+                  <td><button className="link" style={{ color: 'var(--full)' }} onClick={() => onDelPayment(p.id)}>удал.</button></td>
+                </tr>
+              ))}
+            </tbody></table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* Выплата: сумму можно менять — платим полностью или частично. */
+function PayModal({ row, onClose, onSaved }) {
+  const debt = Math.max(0, Math.round(row?.debt || 0));
+  const [amount, setAmount] = useState(String(debt));
+  const [date, setDate] = useState(todayStr());
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const num = Number(amount) || 0;
+  const left = Math.round((row?.debt || 0) - num);
+
+  async function submit() {
+    if (!(num > 0)) return alert('Укажите сумму больше нуля');
+    if (num > debt && !confirm(`Сумма ${money(num)} больше долга ${money(debt)}.\n\nВсё равно выплатить?`)) return;
+    setBusy(true);
+    try {
+      const r = await api('addPayment', { fio: row.fio, amount: num, date, note: note.trim() });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      onSaved();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <h2>Оплата · {row?.fio}</h2>
+      <div className="tiles">
+        <div className="tile" style={{ background: 'var(--eef)' }}><div className="l" style={{ color: 'var(--primd)' }}>Начислено</div><div className="v" style={{ fontSize: 15, color: 'var(--primd)' }}>{money(row?.amount)}</div></div>
+        <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Уже выплачено</div><div className="v" style={{ fontSize: 15, color: 'var(--incd)' }}>{money(row?.paid)}</div></div>
+      </div>
+      <div className="small" style={{ margin: '8px 0' }}>
+        {row?.days} дн. ({row?.weekday} будн. + {row?.weekend} вых.) · долг <b style={{ color: 'var(--expd)' }}>{money(debt)}</b>
+      </div>
+
+      <label>Сумма выплаты, ₸</label>
+      <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ''))} />
+      <div className="chips-row">
+        <button className="chipbtn" onClick={() => setAmount(String(debt))}>Весь долг</button>
+        <button className="chipbtn" onClick={() => setAmount(String(Math.round(debt / 2)))}>Половина</button>
+        <button className="chipbtn" onClick={() => setAmount('')}>Очистить</button>
+      </div>
+      <div className="small" style={{ marginTop: 6 }}>
+        {num > 0 && (left > 0
+          ? <>После выплаты останется долг <b style={{ color: 'var(--expd)' }}>{money(left)}</b>.</>
+          : left === 0
+            ? <b style={{ color: 'var(--incd)' }}>Долг будет закрыт полностью.</b>
+            : <>Переплата <b style={{ color: 'var(--warnd)' }}>{money(-left)}</b>.</>)}
+      </div>
+
+      <label>Дата выплаты</label>
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+
+      <label>Комментарий (необязательно)</label>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="например: аванс за сентябрь" />
+
+      <button className="btn green" disabled={busy} onClick={submit}>✓ Выплатить {num > 0 ? money(num) : ''}</button>
+      <button className="btn sec" onClick={onClose}>Отмена</button>
+      <Busy show={busy} />
     </>
   );
 }
@@ -575,7 +784,7 @@ function FinModal({ cats, onClose, onSaved, onNeedCats }) {
 const shiftLabel = (t) => t === 'day' ? 'День 08:00–20:00' : t === 'night' ? 'Ночь 20:00–08:00' : 'Своя';
 
 /* Операции (для персонала): добавить смену + график */
-function ShiftsTab({ db, onAdd }) {
+function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
   const sh = db.shifts.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   const hours = sh.reduce((a, b) => a + (+b.hours || 0), 0);
 
@@ -591,6 +800,8 @@ function ShiftsTab({ db, onAdd }) {
         <button className="btn" onClick={onAdd}>+ Добавить смену</button>
         <div className="small" style={{ marginTop: 8 }}>Охранников заводите в «⚙ Настройки → Работники» (должность «Охрана»).</div>
       </div>
+
+      <GuardPay db={db} onPay={onPay} onDelPayment={onDelPayment} onReload={onReload} />
 
       <div className="card">
         <h2 style={{ fontSize: 15 }}>График смен</h2>
