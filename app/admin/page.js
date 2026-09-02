@@ -100,7 +100,10 @@ export default function AdminPage() {
           ? <Settings db={db} seg={seg} sess={sess} users={users} setSeg={openSettings} setModal={setModal}
               onDelete={handleDelete} backToApp={() => setScreen('tabs')} />
           : screen === 'uchet'
-          ? <Uchet db={db} backToApp={() => setScreen('tabs')} />
+          ? <Uchet db={db} backToApp={() => setScreen('tabs')}
+              onPay={(row) => setModal({ type: 'pay', data: row })}
+              onDelPayment={(id) => handleDelete('payment', id)}
+              onReload={reload} />
           : <>
               {tab === 'rooms' && <RoomsTab db={db} onFree={(n) => setModal({ type: 'checkin', room: n })} onOcc={(stay) => setModal({ type: 'room', stay })} />}
               {tab === 'fin' && <FinTab db={db} onAdd={() => setModal({ type: 'fin' })} />}
@@ -823,7 +826,7 @@ function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
 }
 
 /* Табель (для учёта) */
-function ShiftsReport({ db }) {
+function ShiftsReport({ db, onPay, onDelPayment, onReload }) {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(todayStr());
   const [tabel, setTabel] = useState(null);
@@ -838,6 +841,8 @@ function ShiftsReport({ db }) {
 
   return (
     <>
+      <GuardPay db={db} onPay={onPay} onDelPayment={onDelPayment} onReload={onReload} />
+
       <div className="card noprint">
         <h2 style={{ fontSize: 15 }}>Табель за период</h2>
         <label>с</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -921,7 +926,7 @@ function ReportTab({ db }) {
 }
 
 /* ===================== Админ-учёт (все отчёты) ===================== */
-function Uchet({ db, backToApp }) {
+function Uchet({ db, backToApp, onPay, onDelPayment, onReload }) {
   const [seg, setSeg] = useState('stay');
   const segs = [['stay', '🏨 Проживание'], ['fin', '₸ Финансы'], ['shifts', '🕒 Смены']];
   return (
@@ -938,7 +943,7 @@ function Uchet({ db, backToApp }) {
 
       {seg === 'stay' && <ReportTab db={db} />}
       {seg === 'fin' && <FinReport db={db} />}
-      {seg === 'shifts' && <ShiftsReport db={db} />}
+      {seg === 'shifts' && <ShiftsReport db={db} onPay={onPay} onDelPayment={onDelPayment} onReload={onReload} />}
 
       <div className="card"><button className="btn sec" onClick={backToApp}>← назад в кабинет</button></div>
     </>
