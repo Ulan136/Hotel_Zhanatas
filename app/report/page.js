@@ -90,13 +90,19 @@ export default function ReportPage() {
   if (who === 'living') list = list.filter((s) => s.status !== 'closed');
   if (who === 'left') list = list.filter((s) => s.status === 'closed');
 
-  /* ---------- поиск: ФИО (с опечатками), ИИН, телефон ---------- */
+  /* ---------- поиск: ФИО (с опечатками), ИИН / паспорт, телефон ---------- */
   const qDigits = onlyDigits(q);
-  if (q.trim()) {
+  const qText = q.trim().toLowerCase();
+  if (qText) {
     list = list.filter((s) => {
       if (qDigits.length >= 3) {
         if (onlyDigits(s.iin).includes(qDigits)) return true;
         if (onlyDigits(s.phone).includes(qDigits)) return true;
+      }
+      // Номер паспорта бывает с буквами — ищем и как обычный текст.
+      if (qText.length >= 3) {
+        if (String(s.iin || '').toLowerCase().includes(qText)) return true;
+        if (String(s.docNo || '').toLowerCase().includes(qText)) return true;
       }
       return fuzzyScore(q, s.fio) !== null;
     });
@@ -266,9 +272,9 @@ export default function ReportPage() {
             </div>
 
             <label>Поиск</label>
-            <input placeholder="🔎 ФИО, ИИН или телефон" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input placeholder="🔎 ФИО, ИИН / паспорт или телефон" value={q} onChange={(e) => setQ(e.target.value)} />
             <div className="small" style={{ marginTop: 6 }}>
-              Поиск по фамилии терпит опечатки. По ИИН и телефону — от трёх цифр подряд.
+              Поиск по фамилии терпит опечатки. По ИИН, паспорту и телефону — от трёх символов подряд.
               {q && <> <button className="link" onClick={() => setQ('')}>сбросить</button></>}
             </div>
           </div>
@@ -280,7 +286,7 @@ export default function ReportPage() {
             <table>
               <tbody>
                 <tr>
-                  <th>ФИО</th><th>Должность</th><th>ИИН</th><th>Телефон</th><th>Компания</th>
+                  <th>ФИО</th><th>Должность</th><th>ИИН / паспорт</th><th>Телефон</th><th>Компания</th>
                   {showRooms && <th>Комн.</th>}
                   <th>Заезд</th><th>Выезд</th><th>Сут.</th><th>Статус</th>
                 </tr>
