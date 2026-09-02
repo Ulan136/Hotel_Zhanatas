@@ -29,6 +29,7 @@ export default function ReportPage() {
   const [to, setTo] = useState(todayStr());
   const [q, setQ] = useState('');
   const [who, setWho] = useState('all'); // all | living | left
+  const [range, setRange] = useState('live');  // live — жил в эти дни, arrived — заехал в эти дни
   const [booked, setBooked] = useState(0);
   const [bookings, setBookings] = useState([]);
   const [req, setReq] = useState(false);       // открыта форма заявки
@@ -73,12 +74,17 @@ export default function ReportPage() {
   const busyRooms = new Map(active.map((s) => [s.room, s]));
   const freeRooms = rooms.filter((n) => !busyRooms.has(n));
 
-  /* ---------- фильтр периода ---------- */
-  // Проживание попадает в отчёт, если пересекается с выбранным периодом.
+  /* ---------- фильтр периода ----------
+     Период можно понимать двояко, поэтому даём выбор:
+       «жили в эти дни»  — проживание пересекается с периодом (по умолчанию);
+       «заехали в эти дни» — в период попала сама дата заезда.
+     Без выбора получалось непонятно: пока все гости живут, смена дат
+     ничего не меняла — проживание пересекается с любым периодом. */
   const day = (v) => String(v || '').slice(0, 10);
   let list = rows.filter((s) => {
     const a = day(s.arrival);
     const d = day(s.departure) || '9999-12-31';
+    if (range === 'arrived') return (!from || a >= from) && (!to || a <= to);
     if (from && d < from) return false;
     if (to && a > to) return false;
     return true;
@@ -224,6 +230,21 @@ export default function ReportPage() {
           <div className="two">
             <div><label>Период с</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
             <div><label>по</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+          </div>
+
+          <label style={{ marginTop: 10 }}>Что показывать за период</label>
+          <div className="chips-row" style={{ marginTop: 4 }}>
+            <button className={'chipbtn' + (range === 'live' ? ' on' : '')} onClick={() => setRange('live')}>
+              Жили в эти дни
+            </button>
+            <button className={'chipbtn' + (range === 'arrived' ? ' on' : '')} onClick={() => setRange('arrived')}>
+              Заехали в эти дни
+            </button>
+          </div>
+          <div className="small" style={{ marginTop: 6 }}>
+            {range === 'live'
+              ? 'Все, кто проживал хотя бы один день периода. Пока гость не выехал, он попадает в любой период — поэтому список может не меняться.'
+              : 'Только те, у кого дата заезда попала в период.'}
           </div>
 
           <div className="two" style={{ marginTop: 10 }}>
