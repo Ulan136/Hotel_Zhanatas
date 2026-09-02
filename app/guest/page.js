@@ -5,7 +5,9 @@ import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
 import { initials, fmt, todayStr, nowTime, nightsNow, fmtDateTime, toAstanaISO,
          CITIZENSHIPS, DEFAULT_COMPANY, POSITIONS,
-         PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf } from '@/lib/ui';
+         PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
+         BIRTH_PLACEHOLDER, formatBirth, birthToISO, birthInput,
+         birthLegacyYear, birthError } from '@/lib/ui';
 import { fuzzySearch } from '@/lib/fuzzy';
 
 /* Экраны:
@@ -75,7 +77,8 @@ function GuestForm({ init, title, onCancel, onDone }) {
   const [fio, setFio] = useState(init?.fio || '');
   const [iin, setIin] = useState(init?.iin || '');
   const [docNo, setDocNo] = useState(init?.docNo || '');
-  const [birthYear, setBirthYear] = useState(init?.birthYear || '');
+  const [birth, setBirth] = useState(birthInput(init?.birthYear || ''));
+  const bornYearOnly = birthLegacyYear(init?.birthYear || '');
   const [company, setCompany] = useState(init?.company ?? DEFAULT_COMPANY);
   const knownPos = POSITIONS.includes(init?.position || '');
   const [pos, setPos] = useState(init?.position ? (knownPos ? init.position : 'Другое') : 'Инженер');
@@ -88,16 +91,14 @@ function GuestForm({ init, title, onCancel, onDone }) {
 
   async function submit() {
     if (!fio.trim()) return alert('Укажите ФИО');
-    if (!iin.trim()) return alert('Укажите ИИН');
+    if (!iin.trim()) return alert('Укажите ИИН или номер паспорта');
     const citizenship = cit === 'Другое' ? citOther.trim() : cit;
     if (!citizenship) return alert('Укажите гражданство');
     const position = pos === 'Другое' ? posOther.trim() : pos;
-    const by = String(birthYear).replace(/\D/g, '');
-    if (by && (by.length !== 4 || +by < 1930 || +by > new Date().getFullYear())) {
-      return alert('Год рождения указан неверно. Пример: 1988');
-    }
+    const bad = birthError(birth);
+    if (bad) return alert(bad);
     const payload = {
-      fio: fio.trim(), iin: iin.trim(), docNo: docNo.trim(), birthYear: by,
+      fio: fio.trim(), iin: iin.trim(), docNo: docNo.trim(), birthYear: birth.trim() ? birthToISO(birth.trim()) : bornYearOnly,
       company: company.trim(), position, destination: destination.trim(),
       citizenship, phone: cleanPhone(phone),
     };
@@ -117,15 +118,20 @@ function GuestForm({ init, title, onCancel, onDone }) {
       <label>ФИО</label>
       <input value={fio} onChange={(e) => setFio(e.target.value)} />
 
-      <label>ИИН</label>
-      <input value={iin} onChange={(e) => setIin(e.target.value)} inputMode="numeric" placeholder="12 цифр" />
+      <label>ИИН / Номер паспорта</label>
+      <input value={iin} onChange={(e) => setIin(e.target.value)} placeholder="12 цифр или номер паспорта" />
 
       <label>Номер документа</label>
       <input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="удостоверение или паспорт" />
 
-      <label>Год рождения</label>
-      <input value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/\D/g, '').slice(0, 4))}
-        inputMode="numeric" placeholder="например 1988" />
+      <label>Дата рождения</label>
+      <input value={birth} onChange={(e) => setBirth(formatBirth(e.target.value))}
+        inputMode="numeric" placeholder={BIRTH_PLACEHOLDER} />
+      <div className="small" style={{ marginTop: 4 }}>
+        {bornYearOnly
+          ? <>Раньше был указан только год — <b>{bornYearOnly}</b>. Впишите полную дату.</>
+          : 'День, месяц, год — точки подставятся сами.'}
+      </div>
 
       <label>Компания / вахта</label>
       <input value={company} onChange={(e) => setCompany(e.target.value)} />
