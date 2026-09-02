@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api, getSess, setSess, clearSess, getLastLogin, forgetMe, REPORT_SESS_KEY as SK } from '@/lib/client';
-import { TopBar, Busy } from '@/components/kit';
+import { TopBar, Busy, Modal } from '@/components/kit';
 import { fmt, fmtDateTime, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
 import { fuzzyScore } from '@/lib/fuzzy';
 import { downloadXlsx, shareXlsx, canShareFiles } from '@/lib/xlsx';
@@ -28,6 +28,8 @@ export default function ReportPage() {
   const [q, setQ] = useState('');
   const [who, setWho] = useState('all'); // all | living | left
   const [booked, setBooked] = useState(0);
+  const [bookings, setBookings] = useState([]);
+  const [req, setReq] = useState(false);       // открыта форма заявки
   const [canShare, setCanShare] = useState(false);
 
   useEffect(() => { setCanShare(canShareFiles()); }, []);
@@ -61,7 +63,8 @@ export default function ReportPage() {
       setRooms(Array.isArray(d?.rooms) ? d.rooms : []);
       setShowRooms(cfg?.report_show_rooms === '1');
       setBooked(Number(d?.booked) || 0);
-    } catch { setRows([]); setRooms([]); } finally { setBusy(false); }
+      setBookings(Array.isArray(d?.bookings) ? d.bookings : []);
+    } catch { setRows([]); setRooms([]); setBookings([]); } finally { setBusy(false); }
   }
 
   /* ---------- текущая занятость (на сейчас) ---------- */
@@ -99,11 +102,8 @@ export default function ReportPage() {
     });
   }
 
-  const totalNights = list.reduce((a, s) => {
-    const n = nightsNow(s.arrival, s.departure);
-    return a + (typeof n === 'number' ? n : 0);
-  }, 0);
-  const livingNow = list.filter((s) => s.status !== 'closed').length;
+  // Сколько из показанных сейчас проживает (с учётом периода, фильтра и поиска).
+  const livingNow = list.filter((x) => x.status !== 'closed').length;
 
   const period = from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
 
@@ -226,23 +226,12 @@ export default function ReportPage() {
         {/* --- Сводка --- */}
         <div className="card">
           <div style={{ fontWeight: 700, marginBottom: 8 }}>MEDINA · {period}</div>
+          {/* Занятость фонда — цифры показываем всегда, даже когда номера комнат скрыты */}
           <div className="kpi3">
             <div className="tile" style={{ background: 'var(--freebg)' }}>
               <div className="v" style={{ fontSize: 20, color: 'var(--incd)' }}>{livingNow}</div>
               <div className="l" style={{ color: 'var(--incd)' }}>проживает</div>
             </div>
-            <div className="tile" style={{ background: 'var(--eef)' }}>
-              <div className="v" style={{ fontSize: 20, color: 'var(--primd)' }}>{list.length}</div>
-              <div className="l" style={{ color: 'var(--primd)' }}>проживаний</div>
-            </div>
-            <div className="tile" style={{ background: 'var(--partbg)' }}>
-              <div className="v" style={{ fontSize: 20, color: 'var(--warnd)' }}>{totalNights}</div>
-              <div className="l" style={{ color: 'var(--warnd)' }}>человеко-суток</div>
-            </div>
-          </div>
-
-          {/* Занятость фонда — цифры показываем всегда, даже когда номера комнат скрыты */}
-          <div className="two" style={{ marginTop: 8 }}>
             <div className="tile" style={{ background: 'var(--freebg)' }}>
               <div className="v" style={{ fontSize: 20, color: 'var(--incd)' }}>{freeRooms.length}</div>
               <div className="l" style={{ color: 'var(--incd)' }}>свободно комнат</div>
@@ -256,6 +245,9 @@ export default function ReportPage() {
             Всего комнат в гостинице: {rooms.length} · ожидается по заявкам: <b>{booked}</b> чел.
           </div>
         </div>
+
+        {/* --- Заявки на проживание от заказчика --- */}
+        <Requests list={bookings} onAdd={() => setReq(true)} />
 
         {/* --- Поиск и таблица --- */}
         <div className="card">
@@ -347,7 +339,94 @@ export default function ReportPage() {
         )}
 
       </div>
+
+      <Modal open={req} onClose={() => setReq(false)}>
+        <RequestForm onClose={() => setReq(false)} onSaved={async () => { setReq(false); await render(); }} />
+      </Modal>
+
       <Busy show={busy} />
     </div>
+  );
+}
+
+/* ===================== Заявка на проживание =====================
+   Заказчик сам сообщает, кого и куда ждёт. Это информация для ресепшна,
+   а не бронь конкретной комнаты, поэтому поля необязательные и строгих
+   проверок нет — кроме самого ФИО. */
+function Requests({ list, onAdd }) {
+  const today = todayStr();
+  const rows = (list || []).filter((b) => b.status !== 'closed');
+
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ fontWeight: 700 }}>Заявка на проживание</div>
+        <span className="small">активных: {rows.length}</span>
+      </div>
+      <div className="small" style={{ marginTop: 4 }}>
+        Сообщите, кого и на какой объект ждёте. Заявку сразу видит ресепшн — комнату подберут при заезде.
+      </div>
+      <button className="btn" onClick={onAdd}>+ Новая заявка</button>
+
+      {rows.length ? (
+        <div style={{ marginTop: 10 }}>
+          {rows.map((b) => (
+            <div key={b.id} className="list-item">
+              <div className="avatar">{b.people > 1 ? b.people : '👤'}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600 }}>{b.fio || `${b.people} чел.`}</div>
+                <div className="small">
+                  {fmt(b.date)}
+                  {b.destination ? ` · ${b.destination}` : ''}
+                  {b.date < today && <span style={{ color: 'var(--warnd)' }}> · дата прошла</span>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : <div className="small" style={{ marginTop: 8 }}>Активных заявок нет.</div>}
+    </div>
+  );
+}
+
+function RequestForm({ onClose, onSaved }) {
+  const [fio, setFio] = useState('');
+  const [dest, setDest] = useState('');
+  const [date, setDate] = useState(todayStr());
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    if (!fio.trim()) return alert('Укажите ФИО');
+    setBusy(true);
+    try {
+      const r = await api('addBooking', {
+        date, people: 1, fio: fio.trim(), destination: dest.trim(), source: 'report',
+      });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      onSaved();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <h2>Заявка на проживание</h2>
+      <div className="small">Информация для ресепшна. Комнату подберут при заезде.</div>
+
+      <label>ФИО</label>
+      <input value={fio} onChange={(e) => setFio(e.target.value)} placeholder="кого ждём" />
+
+      <label>Куда (объект / цех)</label>
+      <input value={dest} onChange={(e) => setDest(e.target.value)} placeholder="например: ремонтный цех" />
+
+      <label>Дата заезда</label>
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      <div className="small" style={{ marginTop: 6 }}>
+        По умолчанию сегодня — дату можно изменить.
+      </div>
+
+      <button className="btn" disabled={busy} onClick={submit}>✓ Отправить заявку</button>
+      <button className="btn sec" onClick={onClose}>Отмена</button>
+      <Busy show={busy} />
+    </>
   );
 }
