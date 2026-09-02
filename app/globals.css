@@ -41,7 +41,9 @@ input:focus,select:focus{outline:none;border-color:var(--primary)}
 .rooms{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 @media(min-width:440px){.rooms{grid-template-columns:repeat(5,1fr)}}
 .room{border-radius:11px;border:1px solid var(--line);padding:8px 4px;text-align:center;cursor:pointer;position:relative;overflow:hidden}
-.room .n{font-size:15px;font-weight:800} .room .s{font-size:9.5px;font-weight:700;margin-top:2px}
+.room .n{font-size:15px;font-weight:800}
+/* Под номером — имя жильца, поэтому длинное подрезаем многоточием. */
+.room .s{font-size:9.5px;font-weight:700;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .room.free{background:var(--freebg)} .room.free .s{color:var(--incd)}
 .room.occ{background:var(--fullbg)} .room.occ .s{color:var(--expd)}
 .room.book{background:var(--partbg)} .room.book .s{color:var(--warnd)}
