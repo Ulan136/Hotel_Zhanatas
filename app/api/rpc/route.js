@@ -83,7 +83,7 @@ const handlers = {
 
   /* ---------- Общий срез (bootstrap) ---------- */
   async bootstrap() {
-    const [guests, staff, categories, finance, shifts, stays, roomRows] = await Promise.all([
+    const [guests, staff, categories, finance, shifts, stays, roomRows, payments, settingRows] = await Promise.all([
       sql`SELECT id, fio, iin, company, citizenship, phone FROM guests ORDER BY fio`,
       sql`SELECT id, fio, role, phone FROM staff ORDER BY fio`,
       sql`SELECT id, name, ctype AS type, parent_id AS parent FROM categories ORDER BY id`,
@@ -94,7 +94,13 @@ const handlers = {
       sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, status, source
           FROM stays ORDER BY arrival DESC, id DESC`,
       sql`SELECT room FROM rooms ORDER BY room`,
+      sql`SELECT id, fio, amount::float8 AS amount, pdate::text AS date, note
+          FROM payments ORDER BY pdate DESC, id DESC`,
+      sql`SELECT skey, svalue FROM settings`,
     ]);
+
+    const settings = {};
+    for (const r of settingRows) settings[r.skey] = r.svalue;
 
     const active = {};
     for (const s of stays) if (s.status !== 'closed') active[s.room] = s;
@@ -105,7 +111,7 @@ const handlers = {
     });
     const guards = staff.filter((s) => s.role === 'Охрана').map((s) => s.fio);
 
-    return ok({ rooms, guests, staff, categories, finance, shifts, stays, guards });
+    return ok({ rooms, guests, staff, categories, finance, shifts, stays, guards, payments, settings });
   },
 
   /* ---------- Гости ---------- */
@@ -273,6 +279,26 @@ const handlers = {
     await sql`INSERT INTO shifts (fio, role, sdate, shift, hours, check_in, check_out, confirmed)
               VALUES (${name}, ${role || ''}, ${date}, ${shift || 'custom'}, ${parseFloat(hours) || 0},
                       ${checkIn || null}, ${checkOut || null}, true)`;
+    return ok({ ok: true });
+  },
+
+  /* ---------- Выплаты охране ---------- */
+  async payments() {
+    const rows = await sql`SELECT id, fio, amount::float8 AS amount, pdate::text AS date, note
+                           FROM payments ORDER BY pdate DESC, id DESC`;
+    return ok(rows);
+  },
+  async addPayment({ fio, amount, date, note }) {
+    if (!fio) return fail('Не указан сотрудник');
+    const a = Math.round((parseFloat(amount) || 0) * 100) / 100;
+    if (!(a > 0)) return fail('Сумма должна быть больше нуля');
+    const rows = await sql`INSERT INTO payments (fio, amount, pdate, note)
+                           VALUES (${fio}, ${a}, ${date || null}, ${note || ''})
+                           RETURNING id`;
+    return ok({ ok: true, id: rows[0].id });
+  },
+  async deletePayment({ id }) {
+    await sql`DELETE FROM payments WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
 
