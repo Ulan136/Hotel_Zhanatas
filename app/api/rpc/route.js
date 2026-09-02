@@ -284,6 +284,39 @@ const handlers = {
     return ok({ rows, rooms: roomRows.map((r) => r.room), bookings, booked });
   },
 
+  /* ---------- Пульс ----------
+     Дешёвая «подпись» состояния базы: сколько записей и какой последний id.
+     Кабинет и отчёт опрашивают её раз в несколько секунд и перезагружают
+     данные только когда подпись изменилась — так новый гость появляется
+     у ресепшна сам, без нажатия «обновить». */
+  async pulse() {
+    // Кроме количества и последнего id берём величины, которые меняются
+    // при правках: сколько сейчас заселено, сколько заявок открыто, суммы.
+    const r = await sql`
+      SELECT (SELECT count(*) FROM stays)                            AS c1,
+             (SELECT COALESCE(max(id), 0) FROM stays)                AS m1,
+             (SELECT count(*) FROM stays WHERE status <> 'closed')   AS a1,
+             (SELECT count(*) FROM guests)                           AS c2,
+             (SELECT COALESCE(max(id), 0) FROM guests)               AS m2,
+             (SELECT count(*) FROM shifts)                           AS c3,
+             (SELECT COALESCE(max(id), 0) FROM shifts)               AS m3,
+             (SELECT COALESCE(sum(hours), 0) FROM shifts)            AS h3,
+             (SELECT count(*) FROM bookings)                         AS c4,
+             (SELECT COALESCE(max(id), 0) FROM bookings)             AS m4,
+             (SELECT count(*) FROM bookings WHERE status = 'new')    AS a4,
+             (SELECT count(*) FROM payments)                         AS c5,
+             (SELECT COALESCE(sum(amount), 0) FROM payments)         AS s5,
+             (SELECT count(*) FROM finance)                          AS c6,
+             (SELECT COALESCE(sum(amount), 0) FROM finance)          AS s6,
+             (SELECT COALESCE(max(departed_at), to_timestamp(0)) FROM stays) AS d1`;
+    const x = r[0] || {};
+    // Склеиваем всё в одну строку — сравнивать проще, чем объект.
+    const sig = [x.c1, x.m1, x.a1, x.c2, x.m2, x.c3, x.m3, x.h3,
+      x.c4, x.m4, x.a4, x.c5, x.s5, x.c6, x.s6,
+      x.d1 ? new Date(x.d1).getTime() : 0].join('.');
+    return ok({ sig });
+  },
+
   /* ---------- Смены ---------- */
   async shifts() {
     const rows = await sql`SELECT id, fio, role, sdate::text AS date, shift, hours::float8 AS hours,
