@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
+import { useLive, liveLabel } from '@/lib/live';
 import { downloadXlsx } from '@/lib/xlsx';
 import { initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
          fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
@@ -33,6 +34,11 @@ export default function AdminPage() {
   useEffect(() => { boot(); }, []);
 
   async function reload() { setDb(await api('bootstrap')); }
+
+  /* Данные подтягиваются сами: пока открыт кабинет, каждые несколько секунд
+     спрашиваем сервер, не изменилось ли что-нибудь. Пока открыто окно
+     (заселение, оплата и т.п.) — не трогаем, чтобы не сбить ввод. */
+  const { checkedAt } = useLive(reload, { enabled: view === 'app' && !modal });
   async function withBusy(fn) { setBusy(true); try { return await fn(); } finally { setBusy(false); } }
 
   async function boot() {
@@ -109,7 +115,7 @@ export default function AdminPage() {
               onDelPayment={(id) => handleDelete('payment', id)}
               onReload={reload} />
           : <>
-              {tab === 'rooms' && <RoomsTab db={db}
+              {tab === 'rooms' && <RoomsTab db={db} checkedAt={checkedAt}
                 onFree={(n) => setModal({ type: 'checkin', room: n })}
                 onOcc={(stay) => setModal({ type: 'room', stay })}
                 onBook={() => setModal({ type: 'booking' })}
@@ -266,12 +272,18 @@ function LoginForm({ onDone, setBusy }) {
 }
 
 /* ===================== Rooms ===================== */
-function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking }) {
+function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, checkedAt }) {
   let occ = 0, free = 0;
   db.rooms.forEach((r) => { if (r.status === 'free') free++; else occ++; });
   return (
     <div className="card">
-      <h2>Комнаты</h2>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <h2 style={{ margin: 0 }}>Комнаты</h2>
+        <span className="small">🟢 {liveLabel(checkedAt)}</span>
+      </div>
+      <div className="small" style={{ marginTop: 2, marginBottom: 6 }}>
+        Новые гости появляются здесь сами — обновлять страницу не нужно.
+      </div>
       <div className="legend">
         <span><i className="dot" style={{ background: 'var(--free)' }} />свободно</span>
         <span><i className="dot" style={{ background: 'var(--full)' }} />занято</span>
