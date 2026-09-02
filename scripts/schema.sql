@@ -76,6 +76,11 @@ CREATE TABLE IF NOT EXISTS categories (
   parent_id   INT REFERENCES categories(id) ON DELETE CASCADE
 );
 
+-- Категория «Зарплата»: в ней подкатегория — это наш сотрудник.
+INSERT INTO categories (name, ctype, parent_id)
+SELECT 'Зарплата', 'expense', NULL
+WHERE NOT EXISTS (SELECT 1 FROM categories WHERE ctype = 'expense' AND name ILIKE 'зарплат%');
+
 -- Финансовые операции
 CREATE TABLE IF NOT EXISTS finance (
   id          SERIAL PRIMARY KEY,
@@ -94,7 +99,7 @@ CREATE TABLE IF NOT EXISTS shifts (
   fio         TEXT NOT NULL,
   role        TEXT DEFAULT '',
   sdate       DATE NOT NULL,
-  shift       TEXT DEFAULT 'custom',
+  shift       TEXT DEFAULT 'night',          -- 'night' (12 ч) или 'day' (сутки)
   hours       NUMERIC(6,2) NOT NULL DEFAULT 0,
   check_in    TIMESTAMPTZ,
   check_out   TIMESTAMPTZ,
@@ -116,11 +121,16 @@ CREATE TABLE IF NOT EXISTS settings (
 INSERT INTO settings (skey, svalue) VALUES ('report_show_rooms', '0')
 ON CONFLICT (skey) DO NOTHING;
 
--- Ставки охраны за день выхода: будни (пн–пт) и выходные (сб, вс).
-INSERT INTO settings (skey, svalue) VALUES ('guard_rate_weekday', '8000')
+-- Ставки за смену: ночная (12 часов) и дневная (сутки).
+-- Вид смены выбирается при её создании; по субботам и воскресеньям предлагается «День».
+INSERT INTO settings (skey, svalue) VALUES ('guard_rate_night', '8000')
 ON CONFLICT (skey) DO NOTHING;
-INSERT INTO settings (skey, svalue) VALUES ('guard_rate_weekend', '10000')
+INSERT INTO settings (skey, svalue) VALUES ('guard_rate_day', '10000')
 ON CONFLICT (skey) DO NOTHING;
+
+-- Старые записи смен без явного вида приводим к виду по дню недели.
+UPDATE shifts SET shift = CASE WHEN EXTRACT(ISODOW FROM sdate) >= 6 THEN 'day' ELSE 'night' END
+WHERE shift IS NULL OR shift NOT IN ('day', 'night');
 
 -- Выплаты охране. Платить можно частями, поэтому это отдельные записи,
 -- а долг = начислено по сменам минус сумма выплат.
@@ -146,6 +156,11 @@ CREATE TABLE IF NOT EXISTS bookings (
   status      TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','closed')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Заявку может подать и заказчик из своего отчёта: тогда указывает ФИО и объект.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS fio TEXT DEFAULT '';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS destination TEXT DEFAULT '';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS source TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS bookings_date_idx ON bookings (bdate);
 
