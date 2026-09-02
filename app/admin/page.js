@@ -8,7 +8,7 @@ import { initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
          fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          DEFAULT_GUARD_RATES, guardEarned, SHIFT_TYPES, defaultShiftType, shiftHours,
-         shiftTypeLabel, shiftTypeOf,
+         shiftTypeLabel, shiftTypeOf, shortName,
          BIRTH_PLACEHOLDER, formatBirth, birthToISO, birthToText, birthInput,
          birthLegacyYear, birthError } from '@/lib/ui';
 
@@ -146,7 +146,7 @@ export default function AdminPage() {
 
       <Modal open={!!modal} onClose={closeModal}>
         {modal?.type === 'checkin' && <CheckinModal room={modal.room} guests={db.guests} onClose={closeModal} onSaved={() => afterSave()} />}
-        {modal?.type === 'room' && <RoomModal stay={modal.stay} onClose={closeModal}
+        {modal?.type === 'room' && <RoomModal stay={modal.stay} rooms={db.rooms} onClose={closeModal}
           onSaved={async () => { await reload(); closeModal(); }}
           onCheckout={async (id, departure, departedAt) => {
             const r = await withBusy(() => api('checkout', { id, departure, departedAt }));
@@ -307,9 +307,12 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
             <div className="rooms">
               {items.map((r) => {
                 const cls = r.status === 'free' ? 'free' : r.status === 'occ' ? 'occ' : 'book';
-                const s = r.status === 'free' ? 'свободно' : r.status === 'occ' ? 'занято' : 'бронь';
+                // На занятой комнате вместо слова «занято» показываем, кто там живёт.
+                const who = r.stay ? shortName(r.stay.fio) : '';
+                const s = r.status === 'free' ? 'свободно' : (who || (r.status === 'occ' ? 'занято' : 'бронь'));
                 return (
-                  <div key={r.room} className={'room ' + cls} onClick={() => r.status === 'free' ? onFree(r.room) : onOcc(r.stay)}>
+                  <div key={r.room} className={'room ' + cls} title={r.stay?.fio || ''}
+                    onClick={() => r.status === 'free' ? onFree(r.room) : onOcc(r.stay)}>
                     <div className="bar" /><div className="n">{r.room}</div><div className="s">{s}</div>
                   </div>
                 );
@@ -322,7 +325,7 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
   );
 }
 
-function RoomModal({ stay: s, onClose, onCheckout, onSaved }) {
+function RoomModal({ stay: s, rooms, onClose, onCheckout, onSaved }) {
   // Дата выбытия: по умолчанию сегодня, но её можно изменить — для поздних выселений.
   const [departure, setDeparture] = useState(todayStr());
   const [depTime, setDepTime] = useState(nowTime());
@@ -334,8 +337,25 @@ function RoomModal({ stay: s, onClose, onCheckout, onSaved }) {
   const [arrTime, setArrTime] = useState(s.arrivedAt ? timeHM(s.arrivedAt) : '12:00');
   const [busy, setBusy] = useState(false);
 
+  // Перевод в другую комнату: выбираем из свободных.
+  const [move, setMove] = useState(false);
+  const freeRooms = (rooms || []).filter((r) => r.status === 'free').map((r) => r.room);
+  const [toRoom, setToRoom] = useState('');
+
   const arrival = String(s.arrival || '').slice(0, 10);
   const future = arrival > todayStr();      // заезд «в будущем» — почти всегда опечатка
+
+  async function saveRoom() {
+    const n = Number(toRoom);
+    if (!n) return alert('Выберите комнату');
+    if (!confirm(`Перевести ${s.fio} из комнаты №${s.room} в №${n}?`)) return;
+    setBusy(true);
+    try {
+      const r = await api('moveStay', { id: s.id, room: n });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      await onSaved?.();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
 
   async function saveArrival() {
     if (!arr) return alert('Укажите дату прибытия');
@@ -386,6 +406,34 @@ function RoomModal({ stay: s, onClose, onCheckout, onSaved }) {
             Время по Астане. Исправьте, если при заселении ошиблись.
           </div>
           <button className="btn" disabled={busy} onClick={saveArrival}>✓ Сохранить заезд</button>
+        </div>
+      )}
+
+      <div className="small" style={{ marginTop: 6 }}>
+        <button className="link" onClick={() => setMove(!move)}>
+          {move ? 'не переселять' : '⇄ перевести в другую комнату'}
+        </button>
+      </div>
+
+      {move && (
+        <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: 'var(--eef)' }}>
+          {freeRooms.length ? (
+            <>
+              <label>Свободная комната</label>
+              <select value={toRoom} onChange={(e) => setToRoom(e.target.value)}>
+                <option value="">— выберите комнату —</option>
+                {groupByBlock(freeRooms).map(({ block, items }) => (
+                  <optgroup key={block} label={`Блок ${block}`}>
+                    {items.map((n) => <option key={n} value={n}>№ {n}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+              <div className="small" style={{ marginTop: 6 }}>
+                Даты заезда и выезда сохранятся — меняется только комната.
+              </div>
+              <button className="btn" disabled={busy} onClick={saveRoom}>⇄ Перевести</button>
+            </>
+          ) : <div className="small">Свободных комнат нет.</div>}
         </div>
       )}
 
