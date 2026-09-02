@@ -83,20 +83,21 @@ const handlers = {
 
   /* ---------- Общий срез (bootstrap) ---------- */
   async bootstrap() {
-    const [guests, staff, categories, finance, shifts, stays, roomRows, payments, settingRows] = await Promise.all([
-      sql`SELECT id, fio, iin, company, citizenship, phone FROM guests ORDER BY fio`,
+    const [guests, staff, categories, finance, shifts, stays, roomRows, payments, settingRows, bookings] = await Promise.all([
+      sql`SELECT id, fio, iin, doc_no AS "docNo", birth_year AS "birthYear", company, position, destination, citizenship, phone FROM guests ORDER BY fio`,
       sql`SELECT id, fio, role, phone FROM staff ORDER BY fio`,
       sql`SELECT id, name, ctype AS type, parent_id AS parent FROM categories ORDER BY id`,
       sql`SELECT id, ftype AS type, category, subcategory, amount::float8 AS amount, fdate::text AS date, note FROM finance ORDER BY id`,
       sql`SELECT id, fio, role, sdate::text AS date, shift, hours::float8 AS hours,
                  check_in AS "checkIn", check_out AS "checkOut", confirmed
           FROM shifts ORDER BY sdate DESC, id DESC`,
-      sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, status, source
-          FROM stays ORDER BY arrival DESC, id DESC`,
+      sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, arrived_at AS "arrivedAt", departed_at AS "departedAt", status, source FROM stays ORDER BY arrival DESC, id DESC`,
       sql`SELECT room FROM rooms ORDER BY room`,
       sql`SELECT id, fio, amount::float8 AS amount, pdate::text AS date, note
           FROM payments ORDER BY pdate DESC, id DESC`,
       sql`SELECT skey, svalue FROM settings`,
+      sql`SELECT id, bdate::text AS date, people, company, note, status
+          FROM bookings ORDER BY bdate DESC, id DESC`,
     ]);
 
     const settings = {};
@@ -111,28 +112,32 @@ const handlers = {
     });
     const guards = staff.filter((s) => s.role === 'Охрана').map((s) => s.fio);
 
-    return ok({ rooms, guests, staff, categories, finance, shifts, stays, guards, payments, settings });
+    return ok({ rooms, guests, staff, categories, finance, shifts, stays, guards, payments, settings, bookings });
   },
 
   /* ---------- Гости ---------- */
   async guests() {
-    const rows = await sql`SELECT id, fio, iin, company, citizenship, phone FROM guests ORDER BY fio`;
+    const rows = await sql`SELECT id, fio, iin, doc_no AS "docNo", birth_year AS "birthYear", company, position, destination, citizenship, phone FROM guests ORDER BY fio`;
     return ok(rows);
   },
-  async addGuest({ fio, iin, company, citizenship, phone }) {
+  async addGuest({ fio, iin, docNo, birthYear, company, position, destination, citizenship, phone }) {
     if (!fio) return fail('Укажите ФИО');
     if (!iin) return fail('Укажите ИИН');
-    const rows = await sql`INSERT INTO guests (fio, iin, company, citizenship, phone)
-                           VALUES (${fio}, ${iin || ''}, ${company || ''}, ${citizenship || ''}, ${phone || ''})
-                           RETURNING id`;
+    const rows = await sql`INSERT INTO guests
+        (fio, iin, doc_no, birth_year, company, position, destination, citizenship, phone)
+      VALUES (${fio}, ${iin || ''}, ${docNo || ''}, ${String(birthYear || '')}, ${company || ''},
+              ${position || ''}, ${destination || ''}, ${citizenship || ''}, ${phone || ''})
+      RETURNING id`;
     return ok({ ok: true, id: rows[0].id });
   },
-  async updateGuest({ id, fio, iin, company, citizenship, phone }) {
+  async updateGuest({ id, fio, iin, docNo, birthYear, company, position, destination, citizenship, phone }) {
     if (!fio) return fail('Укажите ФИО');
     if (!iin) return fail('Укажите ИИН');
-    await sql`UPDATE guests SET fio = ${fio}, iin = ${iin || ''}, company = ${company || ''},
-                                citizenship = ${citizenship || ''}, phone = ${phone || ''}
-              WHERE id = ${Number(id)}`;
+    await sql`UPDATE guests SET
+        fio = ${fio}, iin = ${iin || ''}, doc_no = ${docNo || ''}, birth_year = ${String(birthYear || '')},
+        company = ${company || ''}, position = ${position || ''}, destination = ${destination || ''},
+        citizenship = ${citizenship || ''}, phone = ${phone || ''}
+      WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
   async deleteGuest({ id }) {
@@ -197,8 +202,7 @@ const handlers = {
 
   /* ---------- Комнаты / заселения ---------- */
   async stays() {
-    const rows = await sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, status, source
-                           FROM stays ORDER BY arrival DESC, id DESC`;
+    const rows = await sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, arrived_at AS "arrivedAt", departed_at AS "departedAt", status, source FROM stays ORDER BY arrival DESC, id DESC`;
     return ok(rows);
   },
   async freeRooms() {
@@ -206,14 +210,15 @@ const handlers = {
     return ok(rows.map((r) => r.room));
   },
   // Дата выбытия при заселении НЕ указывается — она проставляется при выселении (checkout).
-  async checkin({ guestId, fio, room, arrival, source }) {
+  async checkin({ guestId, fio, room, arrival, arrivedAt, source }) {
     if (!arrival) return fail('Укажите дату прибытия');
     const rn = Number(room);
     const busy = await sql`SELECT 1 FROM stays WHERE room = ${rn} AND status <> 'closed' LIMIT 1`;
     if (busy.length) return fail('Комната уже занята — выберите другую.');
     try {
-      await sql`INSERT INTO stays (guest_id, fio, room, arrival, departure, status, source)
-                VALUES (${guestId ? Number(guestId) : null}, ${fio}, ${rn}, ${arrival}, NULL, 'on_shift', ${source || ''})`;
+      await sql`INSERT INTO stays (guest_id, fio, room, arrival, departure, arrived_at, status, source)
+                VALUES (${guestId ? Number(guestId) : null}, ${fio}, ${rn}, ${arrival}, NULL,
+                        ${arrivedAt || null}, 'on_shift', ${source || ''})`;
     } catch (e) {
       if (e.code === '23505') return fail('Комнату только что заняли — выберите другую.');
       throw e;
@@ -221,14 +226,16 @@ const handlers = {
     return ok({ ok: true });
   },
   // Дата выбытия приходит со страницы гостя (по умолчанию сегодня, но её можно изменить).
-  async checkout({ id, departure }) {
+  async checkout({ id, departure, departedAt }) {
     const rows = await sql`SELECT arrival::text AS arrival FROM stays WHERE id = ${Number(id)}`;
     if (!rows.length) return fail('Заселение не найдено');
     if (departure) {
       if (departure < rows[0].arrival) return fail('Дата выбытия раньше даты прибытия');
-      await sql`UPDATE stays SET status = 'closed', departure = ${departure} WHERE id = ${Number(id)}`;
+      await sql`UPDATE stays SET status = 'closed', departure = ${departure},
+                                 departed_at = ${departedAt || null} WHERE id = ${Number(id)}`;
     } else {
-      await sql`UPDATE stays SET status = 'closed', departure = COALESCE(departure, CURRENT_DATE) WHERE id = ${Number(id)}`;
+      await sql`UPDATE stays SET status = 'closed', departure = COALESCE(departure, CURRENT_DATE),
+                                 departed_at = COALESCE(${departedAt || null}, now()) WHERE id = ${Number(id)}`;
     }
     return ok({ ok: true });
   },
@@ -252,19 +259,27 @@ const handlers = {
   /* ---------- Отчёт заказчика ---------- */
   // Проживания вместе с данными гостя (ИИН, телефон) и списком комнат — для поиска и занятости.
   async report() {
-    const [rows, roomRows] = await Promise.all([
+    const [rows, roomRows, bookings] = await Promise.all([
       sql`SELECT s.id, s.fio, s.room, s.arrival::text AS arrival, s.departure::text AS departure,
+                 s.arrived_at AS "arrivedAt", s.departed_at AS "departedAt",
                  s.status, s.source,
                  COALESCE(g.iin, '')         AS iin,
+                 COALESCE(g.doc_no, '')      AS "docNo",
+                 COALESCE(g.birth_year, '')  AS "birthYear",
                  COALESCE(g.company, '')     AS company,
+                 COALESCE(g.position, '')    AS position,
+                 COALESCE(g.destination, '') AS destination,
                  COALESCE(g.citizenship, '') AS citizenship,
                  COALESCE(g.phone, '')       AS phone
             FROM stays s
             LEFT JOIN guests g ON g.id = s.guest_id
            ORDER BY s.arrival DESC, s.id DESC`,
       sql`SELECT room FROM rooms ORDER BY room`,
+      sql`SELECT id, bdate::text AS date, people, company, note, status
+            FROM bookings WHERE status = 'new' ORDER BY bdate`,
     ]);
-    return ok({ rows, rooms: roomRows.map((r) => r.room) });
+    const booked = bookings.reduce((a, b) => a + (+b.people || 0), 0);
+    return ok({ rows, rooms: roomRows.map((r) => r.room), bookings, booked });
   },
 
   /* ---------- Смены ---------- */
@@ -279,6 +294,35 @@ const handlers = {
     await sql`INSERT INTO shifts (fio, role, sdate, shift, hours, check_in, check_out, confirmed)
               VALUES (${name}, ${role || ''}, ${date}, ${shift || 'custom'}, ${parseFloat(hours) || 0},
                       ${checkIn || null}, ${checkOut || null}, true)`;
+    return ok({ ok: true });
+  },
+
+  /* ---------- Заявки на бронь (числом человек, без привязки к комнатам) ---------- */
+  async bookings() {
+    const rows = await sql`SELECT id, bdate::text AS date, people, company, note, status,
+                                  created_at AS "createdAt"
+                           FROM bookings ORDER BY bdate DESC, id DESC`;
+    return ok(rows);
+  },
+  async addBooking({ date, people, company, note }) {
+    const n = Math.round(Number(people) || 0);
+    if (!date) return fail('Укажите дату');
+    if (!(n > 0)) return fail('Укажите количество человек');
+    const rows = await sql`INSERT INTO bookings (bdate, people, company, note)
+                           VALUES (${date}, ${n}, ${company || ''}, ${note || ''}) RETURNING id`;
+    return ok({ ok: true, id: rows[0].id });
+  },
+  async updateBooking({ id, date, people, company, note, status }) {
+    const n = Math.round(Number(people) || 0);
+    if (!(n > 0)) return fail('Укажите количество человек');
+    const st = status === 'closed' ? 'closed' : 'new';
+    await sql`UPDATE bookings SET bdate = ${date}, people = ${n}, company = ${company || ''},
+                                  note = ${note || ''}, status = ${st}
+              WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
+  async deleteBooking({ id }) {
+    await sql`DELETE FROM bookings WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
 
