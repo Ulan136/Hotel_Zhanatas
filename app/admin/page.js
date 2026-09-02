@@ -1156,7 +1156,9 @@ const isWeekendDate = (d) => defaultShiftType(d) === 'day';
 
 /* ===================== Report tab ===================== */
 function ReportTab({ db }) {
-  const rows = db.stays.slice().sort((a, b) => (a.arrival < b.arrival ? 1 : -1));
+  // Хронологически: кто заехал раньше — выше, новые записи внизу.
+  const rows = db.stays.slice().sort((a, b) =>
+    a.arrival === b.arrival ? (a.id - b.id) : (a.arrival < b.arrival ? -1 : 1));
   const total = rows.reduce((a, s) => { const n = nightsNow(s.arrival, s.departure); return a + (typeof n === 'number' ? n : 0); }, 0);
   return (
     <>
