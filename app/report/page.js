@@ -233,11 +233,11 @@ export default function ReportPage() {
           </div>
 
           <label style={{ marginTop: 10 }}>Что показывать за период</label>
-          <div className="chips-row" style={{ marginTop: 4 }}>
-            <button className={'chipbtn' + (range === 'live' ? ' on' : '')} onClick={() => setRange('live')}>
+          <div className="seg">
+            <button className={range === 'live' ? 'on' : ''} onClick={() => setRange('live')}>
               Жили в эти дни
             </button>
-            <button className={'chipbtn' + (range === 'arrived' ? ' on' : '')} onClick={() => setRange('arrived')}>
+            <button className={range === 'arrived' ? 'on' : ''} onClick={() => setRange('arrived')}>
               Заехали в эти дни
             </button>
           </div>
@@ -286,18 +286,19 @@ export default function ReportPage() {
         {/* --- Поиск и таблица --- */}
         <div className="card">
           <div className="noprint">
-            <label>Показывать</label>
-            <div className="chips-row" style={{ marginTop: 4 }}>
-              <button className={'chipbtn' + (who === 'all' ? ' on' : '')} onClick={() => setWho('all')}>
+            <label>Кого показывать в списке</label>
+            <div className="seg">
+              <button className={who === 'all' ? 'on' : ''} onClick={() => setWho('all')}>
                 Все <b>{nLiving + nLeft}</b>
               </button>
-              <button className={'chipbtn' + (who === 'living' ? ' on' : '')} onClick={() => setWho('living')}>
+              <button className={who === 'living' ? 'on' : ''} onClick={() => setWho('living')}>
                 Проживают <b>{nLiving}</b>
               </button>
-              <button className={'chipbtn' + (who === 'left' ? ' on' : '')} onClick={() => setWho('left')}>
+              <button className={who === 'left' ? 'on' : ''} onClick={() => setWho('left')}>
                 Выехали <b>{nLeft}</b>
               </button>
             </div>
+            <div className="seghint">Нажмите, чтобы отфильтровать таблицу ниже.</div>
 
             <label>Поиск</label>
             <input placeholder="🔎 ФИО, ИИН / паспорт или телефон" value={q} onChange={(e) => setQ(e.target.value)} />
