@@ -226,6 +226,26 @@ const handlers = {
     }
     return ok({ ok: true });
   },
+  /* Перевод в другую комнату. Уникальный индекс не даст занять комнату,
+     где уже кто-то живёт, — на всякий случай проверяем и сами. */
+  async moveStay({ id, room }) {
+    const n = Number(room);
+    if (!n) return fail('Укажите комнату');
+    const cur = await sql`SELECT room, status FROM stays WHERE id = ${Number(id)}`;
+    if (!cur.length) return fail('Заселение не найдено');
+    if (cur[0].status === 'closed') return fail('Проживание уже закрыто');
+    if (Number(cur[0].room) === n) return fail('Это та же самая комната');
+
+    const exists = await sql`SELECT 1 FROM rooms WHERE room = ${n}`;
+    if (!exists.length) return fail('Такой комнаты нет');
+
+    const busy = await sql`SELECT fio FROM stays WHERE room = ${n} AND status <> 'closed' LIMIT 1`;
+    if (busy.length) return fail('Комната №' + n + ' занята: ' + busy[0].fio);
+
+    await sql`UPDATE stays SET room = ${n} WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
+
   /* Правка даты заезда. Нужна ресепшну: в спешке дату иногда вбивают
      неверно (например 19.09 вместо 19.08), и это ломает счёт суток. */
   async updateStay({ id, arrival, arrivedAt }) {
