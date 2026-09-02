@@ -108,6 +108,26 @@ CREATE TABLE IF NOT EXISTS settings (
 INSERT INTO settings (skey, svalue) VALUES ('report_show_rooms', '0')
 ON CONFLICT (skey) DO NOTHING;
 
+-- Ставки охраны за день выхода: будни (пн–пт) и выходные (сб, вс).
+INSERT INTO settings (skey, svalue) VALUES ('guard_rate_weekday', '8000')
+ON CONFLICT (skey) DO NOTHING;
+INSERT INTO settings (skey, svalue) VALUES ('guard_rate_weekend', '10000')
+ON CONFLICT (skey) DO NOTHING;
+
+-- Выплаты охране. Платить можно частями, поэтому это отдельные записи,
+-- а долг = начислено по сменам минус сумма выплат.
+CREATE TABLE IF NOT EXISTS payments (
+  id          SERIAL PRIMARY KEY,
+  fio         TEXT NOT NULL,
+  amount      NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+  pdate       DATE NOT NULL,
+  note        TEXT DEFAULT '',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS payments_fio_idx ON payments (fio);
+CREATE INDEX IF NOT EXISTS payments_date_idx ON payments (pdate);
+
 -- Комнатный фонд: два блока.
 --   Блок 1 — комнаты 101..112 (12 шт.)
 --   Блок 2 — комнаты 201..216 (16 шт.)
