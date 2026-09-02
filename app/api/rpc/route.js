@@ -96,7 +96,8 @@ const handlers = {
       sql`SELECT id, fio, amount::float8 AS amount, pdate::text AS date, note
           FROM payments ORDER BY pdate DESC, id DESC`,
       sql`SELECT skey, svalue FROM settings`,
-      sql`SELECT id, bdate::text AS date, people, company, note, status
+      sql`SELECT id, bdate::text AS date, people, company, note, status,
+                 fio, destination, source
           FROM bookings ORDER BY bdate DESC, id DESC`,
     ]);
 
@@ -275,7 +276,8 @@ const handlers = {
             LEFT JOIN guests g ON g.id = s.guest_id
            ORDER BY s.arrival DESC, s.id DESC`,
       sql`SELECT room FROM rooms ORDER BY room`,
-      sql`SELECT id, bdate::text AS date, people, company, note, status
+      sql`SELECT id, bdate::text AS date, people, company, note, status,
+                   fio, destination, source
             FROM bookings WHERE status = 'new' ORDER BY bdate`,
     ]);
     const booked = bookings.reduce((a, b) => a + (+b.people || 0), 0);
@@ -292,7 +294,7 @@ const handlers = {
   async addShift({ name, role, date, shift, hours, checkIn, checkOut }) {
     if (!name) return fail('Укажите сотрудника');
     await sql`INSERT INTO shifts (fio, role, sdate, shift, hours, check_in, check_out, confirmed)
-              VALUES (${name}, ${role || ''}, ${date}, ${shift || 'custom'}, ${parseFloat(hours) || 0},
+              VALUES (${name}, ${role || ''}, ${date}, ${shift === 'day' ? 'day' : 'night'}, ${parseFloat(hours) || 0},
                       ${checkIn || null}, ${checkOut || null}, true)`;
     return ok({ ok: true });
   },
@@ -300,24 +302,27 @@ const handlers = {
   /* ---------- Заявки на бронь (числом человек, без привязки к комнатам) ---------- */
   async bookings() {
     const rows = await sql`SELECT id, bdate::text AS date, people, company, note, status,
-                                  created_at AS "createdAt"
+                                  fio, destination, source, created_at AS "createdAt"
                            FROM bookings ORDER BY bdate DESC, id DESC`;
     return ok(rows);
   },
-  async addBooking({ date, people, company, note }) {
-    const n = Math.round(Number(people) || 0);
+  async addBooking({ date, people, company, note, fio, destination, source }) {
+    const n = Math.round(Number(people) || 0) || 1;
     if (!date) return fail('Укажите дату');
     if (!(n > 0)) return fail('Укажите количество человек');
-    const rows = await sql`INSERT INTO bookings (bdate, people, company, note)
-                           VALUES (${date}, ${n}, ${company || ''}, ${note || ''}) RETURNING id`;
+    const rows = await sql`INSERT INTO bookings (bdate, people, company, note, fio, destination, source)
+                           VALUES (${date}, ${n}, ${company || ''}, ${note || ''},
+                                   ${fio || ''}, ${destination || ''}, ${source || 'admin'})
+                           RETURNING id`;
     return ok({ ok: true, id: rows[0].id });
   },
-  async updateBooking({ id, date, people, company, note, status }) {
+  async updateBooking({ id, date, people, company, note, status, fio, destination }) {
     const n = Math.round(Number(people) || 0);
     if (!(n > 0)) return fail('Укажите количество человек');
     const st = status === 'closed' ? 'closed' : 'new';
     await sql`UPDATE bookings SET bdate = ${date}, people = ${n}, company = ${company || ''},
-                                  note = ${note || ''}, status = ${st}
+                                  note = ${note || ''}, status = ${st},
+                                  fio = ${fio || ''}, destination = ${destination || ''}
               WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
@@ -361,8 +366,12 @@ const handlers = {
   async guardIn({ name }) {
     const open = await sql`SELECT 1 FROM shifts WHERE fio = ${name} AND check_in IS NOT NULL AND check_out IS NULL LIMIT 1`;
     if (open.length) return fail('Вы уже на смене');
+    // Дату берём по Астане, вид смены — по дню недели (сб/вс — День, иначе Ночь).
     const rows = await sql`INSERT INTO shifts (fio, role, sdate, shift, check_in)
-                           VALUES (${name}, 'Охрана', CURRENT_DATE, 'custom', now())
+                           SELECT ${name}, 'Охрана', d,
+                                  CASE WHEN EXTRACT(ISODOW FROM d) >= 6 THEN 'day' ELSE 'night' END,
+                                  now()
+                             FROM (SELECT (now() AT TIME ZONE 'Asia/Almaty')::date AS d) t
                            RETURNING check_in AS "checkIn"`;
     return ok({ ok: true, checkIn: rows[0].checkIn });
   },
