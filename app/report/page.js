@@ -1,15 +1,22 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api, getSess, setSess, clearSess, getLastLogin, forgetMe, REPORT_SESS_KEY as SK } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { useLive, liveLabel } from '@/lib/live';
-import { fmt, fmtDateTime, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
+import { fmt, fmtDateTime, timeHM, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
 import { fuzzyScore } from '@/lib/fuzzy';
 import { downloadXlsx } from '@/lib/xlsx';
 import { downloadPdf } from '@/lib/pdf';
 
 const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
+
+const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+function weekday(d) {
+  const p = String(d || '').slice(0, 10).split('-').map(Number);
+  if (p.length !== 3 || !p[0]) return '';
+  return WD[new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()];
+}
 
 function statusText(s) {
   return s === 'closed' ? 'выехал' : s === 'booked' ? 'бронь' : 'проживает';
@@ -29,7 +36,6 @@ export default function ReportPage() {
   const [to, setTo] = useState(todayStr());
   const [q, setQ] = useState('');
   const [who, setWho] = useState('all'); // all | living | left
-  const [range, setRange] = useState('live');  // live — жил в эти дни, arrived — заехал в эти дни
   const [booked, setBooked] = useState(0);
   const [bookings, setBookings] = useState([]);
   const [req, setReq] = useState(false);       // открыта форма заявки
@@ -74,20 +80,13 @@ export default function ReportPage() {
   const busyRooms = new Map(active.map((s) => [s.room, s]));
   const freeRooms = rooms.filter((n) => !busyRooms.has(n));
 
-  /* ---------- фильтр периода ----------
-     Период можно понимать двояко, поэтому даём выбор:
-       «жили в эти дни»  — проживание пересекается с периодом (по умолчанию);
-       «заехали в эти дни» — в период попала сама дата заезда.
-     Без выбора получалось непонятно: пока все гости живут, смена дат
-     ничего не меняла — проживание пересекается с любым периодом. */
+  /* ---------- период = журнал регистраций ----------
+     Список идёт по дате заезда, от ранней к поздней: меняешь даты — меняется
+     список, как в бумажном журнале регистраций. */
   const day = (v) => String(v || '').slice(0, 10);
   let list = rows.filter((s) => {
     const a = day(s.arrival);
-    const d = day(s.departure) || '9999-12-31';
-    if (range === 'arrived') return (!from || a >= from) && (!to || a <= to);
-    if (from && d < from) return false;
-    if (to && a > to) return false;
-    return true;
+    return (!from || a >= from) && (!to || a <= to);
   });
 
   const nLiving = list.filter((s) => s.status !== 'closed').length;
@@ -115,8 +114,25 @@ export default function ReportPage() {
     });
   }
 
-  // Сколько из показанных сейчас проживает (с учётом периода, фильтра и поиска).
-  const livingNow = list.filter((x) => x.status !== 'closed').length;
+  /* ---------- хронология: строго по дате заезда, ранние сверху ---------- */
+  const key = (s) => day(s.arrival) + 'T' + String(s.arrivedAt || '').slice(11, 19);
+  list = [...list].sort((x, y) => key(x).localeCompare(key(y)) || (Number(x.id) - Number(y.id)));
+
+  // Дни журнала: на каждую дату — своя строка-разделитель.
+  const journal = [];
+  for (const s of list) {
+    const d = day(s.arrival);
+    const last = journal[journal.length - 1];
+    if (last && last.date === d) last.items.push(s);
+    else journal.push({ date: d, items: [s] });
+  }
+
+  // Сплошная нумерация журнала и ширина строки-разделителя.
+  let no = 0;
+  const cols = showRooms ? 11 : 10;
+
+  // Сколько человек живёт в гостинице сейчас — не зависит от выбранного периода.
+  const livingNow = active.length;
 
   const period = from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
 
@@ -232,19 +248,8 @@ export default function ReportPage() {
             <div><label>по</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
           </div>
 
-          <label style={{ marginTop: 10 }}>Что показывать за период</label>
-          <div className="seg">
-            <button className={range === 'live' ? 'on' : ''} onClick={() => setRange('live')}>
-              Жили в эти дни
-            </button>
-            <button className={range === 'arrived' ? 'on' : ''} onClick={() => setRange('arrived')}>
-              Заехали в эти дни
-            </button>
-          </div>
           <div className="small" style={{ marginTop: 6 }}>
-            {range === 'live'
-              ? 'Все, кто проживал хотя бы один день периода. Пока гость не выехал, он попадает в любой период — поэтому список может не меняться.'
-              : 'Только те, у кого дата заезда попала в период.'}
+            Список идёт по датам заезда, от ранних к поздним — как журнал регистраций.
           </div>
 
           <div className="two" style={{ marginTop: 10 }}>
@@ -264,7 +269,7 @@ export default function ReportPage() {
           <div className="kpi3">
             <div className="tile" style={{ background: 'var(--freebg)' }}>
               <div className="v" style={{ fontSize: 20, color: 'var(--incd)' }}>{livingNow}</div>
-              <div className="l" style={{ color: 'var(--incd)' }}>проживает</div>
+              <div className="l" style={{ color: 'var(--incd)' }}>проживает сейчас</div>
             </div>
             <div className="tile" style={{ background: 'var(--freebg)' }}>
               <div className="v" style={{ fontSize: 20, color: 'var(--incd)' }}>{freeRooms.length}</div>
@@ -309,30 +314,41 @@ export default function ReportPage() {
           </div>
 
           <div style={{ fontWeight: 700, margin: '12px 0 6px' }}>
-            {who === 'living' ? 'Проживают сейчас' : who === 'left' ? 'Уже выехали' : 'Проживание работников'}
+            {who === 'living' ? 'Журнал: проживают сейчас' : who === 'left' ? 'Журнал: уже выехали' : 'Журнал регистраций'}
           </div>
           <div style={{ overflow: 'auto' }}>
             <table>
               <tbody>
                 <tr>
+                  <th>№</th>
                   <th>ФИО</th><th>Должность</th><th>ИИН / паспорт</th><th>Телефон</th><th>Компания</th>
                   {showRooms && <th>Комн.</th>}
                   <th>Заезд</th><th>Выезд</th><th>Сут.</th><th>Статус</th>
                 </tr>
-                {list.length ? list.map((s) => (
-                  <tr key={s.id}>
-                    <td>{s.fio}</td>
-                    <td>{s.position || '—'}</td>
-                    <td>{s.iin || '—'}</td>
-                    <td>{s.phone ? formatPhone(s.phone) : '—'}</td>
-                    <td>{s.company || '—'}</td>
-                    {showRooms && <td>№{s.room}</td>}
-                    <td>{s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival)}</td>
-                    <td>{s.departure ? (s.departedAt ? fmtDateTime(s.departedAt) : fmt(s.departure)) : '—'}</td>
-                    <td>{nightsNow(s.arrival, s.departure)}</td>
-                    <td>{statusText(s.status)}</td>
-                  </tr>
-                )) : <tr><td colSpan={showRooms ? 10 : 9} className="small">Ничего не найдено за выбранный период.</td></tr>}
+                {journal.length ? journal.map((g) => (
+                  <Fragment key={g.date}>
+                    <tr>
+                      <td colSpan={cols} style={{ background: 'var(--eef)', fontWeight: 700, color: 'var(--primd)' }}>
+                        {fmt(g.date)} · {weekday(g.date)} — заехало {g.items.length}
+                      </td>
+                    </tr>
+                    {g.items.map((s) => (
+                      <tr key={s.id}>
+                        <td style={{ color: 'var(--muted)' }}>{++no}</td>
+                        <td>{s.fio}</td>
+                        <td>{s.position || '—'}</td>
+                        <td>{s.iin || '—'}</td>
+                        <td>{s.phone ? formatPhone(s.phone) : '—'}</td>
+                        <td>{s.company || '—'}</td>
+                        {showRooms && <td>№{s.room}</td>}
+                        <td>{s.arrivedAt ? timeHM(s.arrivedAt) : '—'}</td>
+                        <td>{s.departure ? (s.departedAt ? fmtDateTime(s.departedAt) : fmt(s.departure)) : '—'}</td>
+                        <td>{nightsNow(s.arrival, s.departure)}</td>
+                        <td>{statusText(s.status)}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                )) : <tr><td colSpan={cols} className="small">За эти даты никто не заезжал.</td></tr>}
               </tbody>
             </table>
           </div>
