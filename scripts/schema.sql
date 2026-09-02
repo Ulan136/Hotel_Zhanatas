@@ -25,9 +25,13 @@ CREATE TABLE IF NOT EXISTS guests (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Миграция для уже созданных баз: добавляем ИИН и гражданство.
+-- Миграция для уже созданных баз: анкета гостя.
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS iin         TEXT DEFAULT '';
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS citizenship TEXT DEFAULT '';
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS doc_no      TEXT DEFAULT '';   -- номер документа
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS birth_year  TEXT DEFAULT '';   -- год рождения
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS position    TEXT DEFAULT '';   -- должность
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS destination TEXT DEFAULT '';   -- куда (объект/цех)
 
 -- Персонал (повар, охрана и т.д.)
 CREATE TABLE IF NOT EXISTS staff (
@@ -55,6 +59,10 @@ CREATE TABLE IF NOT EXISTS stays (
   source      TEXT DEFAULT '',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Точные моменты заезда и выезда по времени Астаны (дата + часы/минуты).
+ALTER TABLE stays ADD COLUMN IF NOT EXISTS arrived_at  TIMESTAMPTZ;
+ALTER TABLE stays ADD COLUMN IF NOT EXISTS departed_at TIMESTAMPTZ;
 
 -- Надёжность: в одной комнате не может быть двух активных (не закрытых) заселений.
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_stay_per_room
@@ -127,6 +135,19 @@ CREATE TABLE IF NOT EXISTS payments (
 
 CREATE INDEX IF NOT EXISTS payments_fio_idx ON payments (fio);
 CREATE INDEX IF NOT EXISTS payments_date_idx ON payments (pdate);
+
+-- Заявки на бронь: сколько человек ожидается, без привязки к конкретным комнатам.
+CREATE TABLE IF NOT EXISTS bookings (
+  id          SERIAL PRIMARY KEY,
+  bdate       DATE NOT NULL,                 -- на какую дату ждём
+  people      INT NOT NULL CHECK (people > 0),
+  company     TEXT DEFAULT '',
+  note        TEXT DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','closed')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS bookings_date_idx ON bookings (bdate);
 
 -- Комнатный фонд: два блока.
 --   Блок 1 — комнаты 101..112 (12 шт.)
