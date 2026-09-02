@@ -274,7 +274,8 @@ const handlers = {
                  COALESCE(g.phone, '')       AS phone
             FROM stays s
             LEFT JOIN guests g ON g.id = s.guest_id
-           ORDER BY s.arrival DESC, s.id DESC`,
+           -- Хронологически: кто заехал раньше — выше, новые записи внизу.
+           ORDER BY s.arrival ASC, s.id ASC`,
       sql`SELECT room FROM rooms ORDER BY room`,
       sql`SELECT id, bdate::text AS date, people, company, note, status,
                    fio, destination, source
