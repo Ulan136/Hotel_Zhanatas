@@ -147,6 +147,7 @@ export default function AdminPage() {
       <Modal open={!!modal} onClose={closeModal}>
         {modal?.type === 'checkin' && <CheckinModal room={modal.room} guests={db.guests} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'room' && <RoomModal stay={modal.stay} onClose={closeModal}
+          onSaved={async () => { await reload(); closeModal(); }}
           onCheckout={async (id, departure, departedAt) => {
             const r = await withBusy(() => api('checkout', { id, departure, departedAt }));
             if (!r.ok) return alert(r.error || 'Ошибка');
@@ -321,11 +322,31 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
   );
 }
 
-function RoomModal({ stay: s, onClose, onCheckout }) {
+function RoomModal({ stay: s, onClose, onCheckout, onSaved }) {
   // Дата выбытия: по умолчанию сегодня, но её можно изменить — для поздних выселений.
   const [departure, setDeparture] = useState(todayStr());
   const [depTime, setDepTime] = useState(nowTime());
+
+  /* Правка заезда: дату иногда вбивают неверно (месяц, год), и тогда
+     неправильно считаются сутки. Меняет только ресепшн, здесь, в кабинете. */
+  const [edit, setEdit] = useState(false);
+  const [arr, setArr] = useState(String(s.arrival || '').slice(0, 10));
+  const [arrTime, setArrTime] = useState(s.arrivedAt ? timeHM(s.arrivedAt) : '12:00');
+  const [busy, setBusy] = useState(false);
+
   const arrival = String(s.arrival || '').slice(0, 10);
+  const future = arrival > todayStr();      // заезд «в будущем» — почти всегда опечатка
+
+  async function saveArrival() {
+    if (!arr) return alert('Укажите дату прибытия');
+    if (arr > todayStr() && !confirm(`Дата ${fmt(arr)} — в будущем. Всё равно сохранить?`)) return;
+    setBusy(true);
+    try {
+      const r = await api('updateStay', { id: s.id, arrival: arr, arrivedAt: toAstanaISO(arr, arrTime) });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      await onSaved?.();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
 
   function submit() {
     if (!departure) return alert('Укажите дату выбытия');
@@ -346,6 +367,27 @@ function RoomModal({ stay: s, onClose, onCheckout }) {
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Прибытие</div><div className="v" style={{ fontSize: 13, color: 'var(--incd)' }}>{s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival)}</div></div>
         <div className="tile" style={{ background: 'var(--partbg)' }}><div className="l" style={{ color: 'var(--warnd)' }}>Суток</div><div className="v" style={{ fontSize: 16, color: 'var(--warnd)' }}>{nightsNow(s.arrival, departure)}</div></div>
       </div>
+
+      <div className="small" style={{ marginTop: 6 }}>
+        {future && <span style={{ color: 'var(--expd)' }}>Дата заезда в будущем — похоже на опечатку. </span>}
+        <button className="link" onClick={() => setEdit(!edit)}>
+          {edit ? 'не менять заезд' : '✎ изменить дату заезда'}
+        </button>
+      </div>
+
+      {edit && (
+        <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: 'var(--eef)' }}>
+          <label>Прибытие — дата и время</label>
+          <div className="two">
+            <input type="date" value={arr} onChange={(e) => setArr(e.target.value)} />
+            <input type="time" value={arrTime} onChange={(e) => setArrTime(e.target.value)} />
+          </div>
+          <div className="small" style={{ marginTop: 6 }}>
+            Время по Астане. Исправьте, если при заселении ошиблись.
+          </div>
+          <button className="btn" disabled={busy} onClick={saveArrival}>✓ Сохранить заезд</button>
+        </div>
+      )}
 
       <label>Выбытие</label>
       <div className="two">
