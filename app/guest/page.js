@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
-import { initials, fmt, todayStr, nightsNow, CITIZENSHIPS, DEFAULT_COMPANY,
+import { initials, fmt, todayStr, nowTime, nightsNow, fmtDateTime, toAstanaISO,
+         CITIZENSHIPS, DEFAULT_COMPANY, POSITIONS,
          PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf } from '@/lib/ui';
 import { fuzzySearch } from '@/lib/fuzzy';
 
@@ -23,15 +24,20 @@ function Steps({ n, of }) {
   return <div className="step-dots">{Array.from({ length: of }, (_, i) => <i key={i} className={i < n ? 'on' : ''} />)}</div>;
 }
 
-// Поле даты: подставляем сегодня, но день можно изменить — для поздних регистраций.
-function DateField({ label, value, onChange }) {
+/* Дата и точное время по Астане. Подставляем «сейчас», но всё можно изменить —
+   для поздних регистраций. */
+function DateTimeField({ label, date, time, onDate, onTime }) {
+  const isNow = date === todayStr();
   return (
     <>
       <label>{label}</label>
-      <input type="date" value={value} onChange={(e) => onChange(e.target.value)} />
+      <div className="two">
+        <input type="date" value={date} onChange={(e) => onDate(e.target.value)} />
+        <input type="time" value={time} onChange={(e) => onTime(e.target.value)} />
+      </div>
       <div className="small" style={{ marginTop: 6 }}>
-        Подставлен сегодняшний день — при необходимости выберите другую дату.
-        {value !== todayStr() && <> <button className="link" onClick={() => onChange(todayStr())}>вернуть сегодня</button></>}
+        Время по Астане. Подставлены сегодняшний день и текущее время — при необходимости измените.
+        {!isNow && <> <button className="link" onClick={() => { onDate(todayStr()); onTime(nowTime()); }}>вернуть сейчас</button></>}
       </div>
     </>
   );
@@ -68,7 +74,13 @@ function GuestForm({ init, title, onCancel, onDone }) {
   const known = CITIZENSHIPS.includes(init?.citizenship || '');
   const [fio, setFio] = useState(init?.fio || '');
   const [iin, setIin] = useState(init?.iin || '');
+  const [docNo, setDocNo] = useState(init?.docNo || '');
+  const [birthYear, setBirthYear] = useState(init?.birthYear || '');
   const [company, setCompany] = useState(init?.company ?? DEFAULT_COMPANY);
+  const knownPos = POSITIONS.includes(init?.position || '');
+  const [pos, setPos] = useState(init?.position ? (knownPos ? init.position : 'Другое') : 'Инженер');
+  const [posOther, setPosOther] = useState(init?.position && !knownPos ? init.position : '');
+  const [destination, setDestination] = useState(init?.destination || '');
   const [cit, setCit] = useState(init?.citizenship ? (known ? init.citizenship : 'Другое') : 'Казахстан');
   const [citOther, setCitOther] = useState(init?.citizenship && !known ? init.citizenship : '');
   const [phone, setPhone] = useState(init?.phone ? formatPhone(init.phone) : '+7 ');
@@ -79,7 +91,16 @@ function GuestForm({ init, title, onCancel, onDone }) {
     if (!iin.trim()) return alert('Укажите ИИН');
     const citizenship = cit === 'Другое' ? citOther.trim() : cit;
     if (!citizenship) return alert('Укажите гражданство');
-    const payload = { fio: fio.trim(), iin: iin.trim(), company: company.trim(), citizenship, phone: cleanPhone(phone) };
+    const position = pos === 'Другое' ? posOther.trim() : pos;
+    const by = String(birthYear).replace(/\D/g, '');
+    if (by && (by.length !== 4 || +by < 1930 || +by > new Date().getFullYear())) {
+      return alert('Год рождения указан неверно. Пример: 1988');
+    }
+    const payload = {
+      fio: fio.trim(), iin: iin.trim(), docNo: docNo.trim(), birthYear: by,
+      company: company.trim(), position, destination: destination.trim(),
+      citizenship, phone: cleanPhone(phone),
+    };
     setBusy(true);
     try {
       const r = init?.id
@@ -99,8 +120,24 @@ function GuestForm({ init, title, onCancel, onDone }) {
       <label>ИИН</label>
       <input value={iin} onChange={(e) => setIin(e.target.value)} inputMode="numeric" placeholder="12 цифр" />
 
+      <label>Номер документа</label>
+      <input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="удостоверение или паспорт" />
+
+      <label>Год рождения</label>
+      <input value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/\D/g, '').slice(0, 4))}
+        inputMode="numeric" placeholder="например 1988" />
+
       <label>Компания / вахта</label>
       <input value={company} onChange={(e) => setCompany(e.target.value)} />
+
+      <label>Должность</label>
+      <select value={pos} onChange={(e) => setPos(e.target.value)}>
+        {POSITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      {pos === 'Другое' && <input value={posOther} onChange={(e) => setPosOther(e.target.value)} placeholder="укажите должность" />}
+
+      <label>Куда (объект / цех)</label>
+      <input value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="например: ремонтный цех" />
 
       <label>Гражданство</label>
       <select value={cit} onChange={(e) => setCit(e.target.value)}>
@@ -132,17 +169,20 @@ export default function GuestPage() {
   const [freeRooms, setFreeRooms] = useState([]);
   const [room, setRoom] = useState(null);
   const [arrival, setArrival] = useState(todayStr());
+  const [arrTime, setArrTime] = useState(nowTime());
 
   const [stay, setStay] = useState(null);
   const [departure, setDeparture] = useState(todayStr());
+  const [depTime, setDepTime] = useState(nowTime());
   const [receipt, setReceipt] = useState(null);
 
   // Дата берётся у устройства гостя, поэтому проставляем её после монтирования.
-  useEffect(() => { setArrival(todayStr()); setDeparture(todayStr()); }, []);
+  useEffect(() => { setArrival(todayStr()); setDeparture(todayStr()); setArrTime(nowTime()); setDepTime(nowTime()); }, []);
 
   function reset() {
     setScreen('start'); setGuest(null); setFormInit(null); setRoom(null);
-    setStay(null); setReceipt(null); setArrival(todayStr()); setDeparture(todayStr());
+    setStay(null); setReceipt(null);
+    setArrival(todayStr()); setDeparture(todayStr()); setArrTime(nowTime()); setDepTime(nowTime());
   }
 
   async function load(action, setter) {
@@ -187,9 +227,10 @@ export default function GuestPage() {
     if (!arrival) return alert('Укажите дату прибытия');
     setBusy(true);
     try {
-      const r = await api('checkin', { guestId: guest?.id, fio: guest?.fio, room, arrival, source: 'qr' });
+      const arrivedAt = toAstanaISO(arrival, arrTime);
+      const r = await api('checkin', { guestId: guest?.id, fio: guest?.fio, room, arrival, arrivedAt, source: 'qr' });
       if (!r.ok) return alert(r.error || 'Комнату уже заняли — вернитесь и выберите другую.');
-      setReceipt({ fio: guest?.fio, room, arrival });
+      setReceipt({ fio: guest?.fio, room, arrival, arrivedAt });
       setScreen('in-done');
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
@@ -201,7 +242,7 @@ export default function GuestPage() {
     setScreen('out-search');
   }
 
-  function pickStay(s) { setStay(s); setDeparture(todayStr()); setScreen('out-date'); }
+  function pickStay(s) { setStay(s); setDeparture(todayStr()); setDepTime(nowTime()); setScreen('out-date'); }
 
   async function confirmDeparture() {
     if (!departure) return alert('Укажите дату выбытия');
@@ -210,9 +251,10 @@ export default function GuestPage() {
     }
     setBusy(true);
     try {
-      const r = await api('checkout', { id: stay.id, departure });
+      const departedAt = toAstanaISO(departure, depTime);
+      const r = await api('checkout', { id: stay.id, departure, departedAt });
       if (!r.ok) return alert(r.error || 'Ошибка');
-      setReceipt({ fio: stay.fio, room: stay.room, arrival: stay.arrival, departure });
+      setReceipt({ fio: stay.fio, room: stay.room, arrival: stay.arrival, arrivedAt: stay.arrivedAt, departure, departedAt });
       setScreen('out-done');
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
@@ -317,7 +359,7 @@ export default function GuestPage() {
                 <div className="small">Блок {blockOf(room)} · комната № {room}</div>
               </div>
             </div>
-            <DateField label="Прибытие" value={arrival} onChange={setArrival} />
+            <DateTimeField label="Прибытие" date={arrival} time={arrTime} onDate={setArrival} onTime={setArrTime} />
             <div className="small" style={{ marginTop: 8 }}>Дату выбытия указывать не нужно — отметите её при выезде.</div>
             <button className="btn green" disabled={busy} onClick={confirmArrival}>✓ Подтвердить заезд</button>
             {back(() => setScreen('in-room'))}
@@ -330,7 +372,7 @@ export default function GuestPage() {
             <NameSearch
               items={living}
               getText={(s) => s.fio}
-              sub={(s) => `блок ${blockOf(s.room)} · комната №${s.room} · с ${fmt(s.arrival)}`}
+              sub={(s) => `блок ${blockOf(s.room)} · комната №${s.room} · с ${s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival)}`}
               placeholder="Начните набирать ФИО"
               nothing="Среди проживающих такого нет. Проверьте написание или обратитесь на ресепшн."
               onPick={pickStay}
@@ -346,10 +388,10 @@ export default function GuestPage() {
               <div className="avatar">{initials(stay.fio)}</div>
               <div>
                 <div style={{ fontWeight: 700 }}>{stay.fio}</div>
-                <div className="small">Блок {blockOf(stay.room)} · комната № {stay.room} · с {fmt(stay.arrival)}</div>
+                <div className="small">Блок {blockOf(stay.room)} · комната № {stay.room} · с {stay.arrivedAt ? fmtDateTime(stay.arrivedAt) : fmt(stay.arrival)}</div>
               </div>
             </div>
-            <DateField label="Выбытие" value={departure} onChange={setDeparture} />
+            <DateTimeField label="Выбытие" date={departure} time={depTime} onDate={setDeparture} onTime={setDepTime} />
             <div className="small" style={{ marginTop: 8 }}>
               Итого проживание: <b>{nightsNow(stay.arrival, departure)} суток</b>
             </div>
@@ -369,7 +411,7 @@ export default function GuestPage() {
               <table><tbody>
                 <tr><td className="small">Гость</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{receipt.fio}</td></tr>
                 <tr><td className="small">Комната</td><td style={{ textAlign: 'right', fontWeight: 600 }}>блок {blockOf(receipt.room)} · № {receipt.room}</td></tr>
-                <tr><td className="small">Прибытие</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(receipt.arrival)}</td></tr>
+                <tr><td className="small">Прибытие</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{receipt.arrivedAt ? fmtDateTime(receipt.arrivedAt) : fmt(receipt.arrival)}</td></tr>
                 <tr><td className="small">Статус</td><td style={{ textAlign: 'right', fontWeight: 600 }}>на смене</td></tr>
               </tbody></table>
               <button className="btn sec" onClick={reset}>Готово</button>
@@ -388,7 +430,8 @@ export default function GuestPage() {
               <table><tbody>
                 <tr><td className="small">Гость</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{receipt.fio}</td></tr>
                 <tr><td className="small">Комната</td><td style={{ textAlign: 'right', fontWeight: 600 }}>блок {blockOf(receipt.room)} · № {receipt.room}</td></tr>
-                <tr><td className="small">Период</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(receipt.arrival)} – {fmt(receipt.departure)}</td></tr>
+                <tr><td className="small">Прибытие</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{receipt.arrivedAt ? fmtDateTime(receipt.arrivedAt) : fmt(receipt.arrival)}</td></tr>
+                <tr><td className="small">Выбытие</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{receipt.departedAt ? fmtDateTime(receipt.departedAt) : fmt(receipt.departure)}</td></tr>
                 <tr><td className="small">Суток</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{nightsNow(receipt.arrival, receipt.departure)}</td></tr>
               </tbody></table>
               <button className="btn sec" onClick={reset}>Готово</button>
