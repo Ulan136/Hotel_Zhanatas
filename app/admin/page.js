@@ -6,7 +6,8 @@ import { downloadXlsx } from '@/lib/xlsx';
 import { initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
          fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
-         DEFAULT_GUARD_RATES, guardEarned } from '@/lib/ui';
+         DEFAULT_GUARD_RATES, guardEarned, SHIFT_TYPES, defaultShiftType, shiftHours,
+         shiftTypeLabel } from '@/lib/ui';
 
 const STAFF_ROLES = ['Повар', 'Помощник повара', 'Ресепшн', 'Уборка', 'Охрана', 'Другое'];
 const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [], payments: [], settings: {}, bookings: [] };
@@ -143,8 +144,8 @@ export default function AdminPage() {
             if (!r.ok) return alert(r.error || 'Ошибка');
             await afterSave();
           }} />}
-        {modal?.type === 'fin' && <FinModal cats={db.categories} onClose={closeModal} onSaved={() => afterSave()} onNeedCats={() => { closeModal(); openSettings('cats'); }} />}
-        {modal?.type === 'shift' && <ShiftModal onClose={closeModal} onSaved={() => afterSave()} />}
+        {modal?.type === 'fin' && <FinModal cats={db.categories} staff={db.staff} onClose={closeModal} onSaved={() => afterSave()} onNeedCats={() => { closeModal(); openSettings('cats'); }} />}
+        {modal?.type === 'shift' && <ShiftModal db={db} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'pay' && <PayModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'booking' && <BookingModal onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'guest' && <GuestModal guest={modal.data} onClose={closeModal} onSaved={() => afterSave('guests')} />}
@@ -408,6 +409,7 @@ function Bookings({ db, onBook, onDel, onClose }) {
       </div>
       <div className="small" style={{ marginTop: 4 }}>
         Бронь по количеству человек, комнату гость выберет при заезде.
+        Заявки заказчика из его отчёта приходят сюда же.
       </div>
       <button className="btn" onClick={onBook}>+ Заявка на бронь</button>
 
@@ -419,9 +421,15 @@ function Bookings({ db, onBook, onDel, onClose }) {
               <div key={b.id} className="list-item">
                 <div className="avatar" style={{ background: past ? 'var(--warn)' : 'var(--primary)' }}>{b.people}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600 }}>{fmt(b.date)} · {b.people} чел.</div>
+                  <div style={{ fontWeight: 600 }}>
+                    {b.fio ? b.fio : `${b.people} чел.`}
+                    {b.source === 'report' && <span className="small" style={{ color: 'var(--primd)' }}> · от заказчика</span>}
+                  </div>
                   <div className="small">
-                    {[b.company, b.note].filter(Boolean).join(' · ') || 'без комментария'}
+                    {fmt(b.date)}
+                    {b.destination ? ` · ${b.destination}` : ''}
+                    {b.fio && b.people > 1 ? ` · ${b.people} чел.` : ''}
+                    {[b.company, b.note].filter(Boolean).length ? ' · ' + [b.company, b.note].filter(Boolean).join(' · ') : ''}
                     {past && <span style={{ color: 'var(--warnd)' }}> · дата прошла</span>}
                   </div>
                 </div>
@@ -441,6 +449,8 @@ function BookingModal({ onClose, onSaved }) {
   const [date, setDate] = useState(todayStr());
   const [people, setPeople] = useState('1');
   const [company, setCompany] = useState(DEFAULT_COMPANY);
+  const [fio, setFio] = useState('');
+  const [dest, setDest] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -450,7 +460,10 @@ function BookingModal({ onClose, onSaved }) {
     if (!(n > 0)) return alert('Укажите количество человек');
     setBusy(true);
     try {
-      const r = await api('addBooking', { date, people: n, company: company.trim(), note: note.trim() });
+      const r = await api('addBooking', {
+        date, people: n, company: company.trim(), note: note.trim(),
+        fio: fio.trim(), destination: dest.trim(), source: 'admin',
+      });
       if (!r.ok) return alert(r.error || 'Ошибка');
       onSaved();
     } catch (e) { alert(e.message); } finally { setBusy(false); }
@@ -472,6 +485,10 @@ function BookingModal({ onClose, onSaved }) {
       </div>
       <label>Компания / вахта</label>
       <input value={company} onChange={(e) => setCompany(e.target.value)} />
+      <label>ФИО (необязательно)</label>
+      <input value={fio} onChange={(e) => setFio(e.target.value)} placeholder="если известно" />
+      <label>Куда — объект / цех (необязательно)</label>
+      <input value={dest} onChange={(e) => setDest(e.target.value)} placeholder="например: ремонтный цех" />
       <label>Комментарий (необязательно)</label>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="например: приедут вечером" />
       <button className="btn" disabled={busy} onClick={submit}>✓ Сохранить заявку</button>
@@ -488,15 +505,15 @@ function BookingModal({ onClose, onSaved }) {
 function guardRates(settings) {
   const n = (v, d) => { const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : d; };
   return {
-    weekday: n(settings?.guard_rate_weekday, DEFAULT_GUARD_RATES.weekday),
-    weekend: n(settings?.guard_rate_weekend, DEFAULT_GUARD_RATES.weekend),
+    night: n(settings?.guard_rate_night, DEFAULT_GUARD_RATES.night),
+    day: n(settings?.guard_rate_day, DEFAULT_GUARD_RATES.day),
   };
 }
 
 function GuardPay({ db, onPay, onDelPayment, onReload }) {
   const saved = guardRates(db.settings);
-  const [wd, setWd] = useState(String(saved.weekday));
-  const [we, setWe] = useState(String(saved.weekend));
+  const [rn, setRn] = useState(String(saved.night));
+  const [rd, setRd] = useState(String(saved.day));
   const [editRates, setEditRates] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -518,12 +535,12 @@ function GuardPay({ db, onPay, onDelPayment, onReload }) {
   const totalDebt = totalEarned - totalPaid;
 
   async function saveRates() {
-    const a = Number(wd), b = Number(we);
+    const a = Number(rn), b = Number(rd);
     if (!Number.isFinite(a) || a < 0 || !Number.isFinite(b) || b < 0) return alert('Ставка должна быть числом');
     setBusy(true);
     try {
-      await api('setSetting', { key: 'guard_rate_weekday', value: String(Math.round(a)) });
-      await api('setSetting', { key: 'guard_rate_weekend', value: String(Math.round(b)) });
+      await api('setSetting', { key: 'guard_rate_night', value: String(Math.round(a)) });
+      await api('setSetting', { key: 'guard_rate_day', value: String(Math.round(b)) });
       await onReload?.();
       setEditRates(false);
     } catch (e) { alert(e.message); } finally { setBusy(false); }
@@ -535,15 +552,16 @@ function GuardPay({ db, onPay, onDelPayment, onReload }) {
     <div className="card">
       <h2 style={{ fontSize: 15 }}>Оплата охраны</h2>
       <div className="small">
-        Будни {money(rates.weekday)} за день · суббота и воскресенье {money(rates.weekend)} за день.
+        Смена <b>Ночь</b> — {money(rates.night)} · смена <b>День</b> — {money(rates.day)}.
         {' '}<button className="link" onClick={() => setEditRates(!editRates)}>{editRates ? 'скрыть' : 'изменить ставки'}</button>
       </div>
+      <div className="small">Считаем по виду смены. По субботам и воскресеньям смена предлагается дневная.</div>
 
       {editRates && (
         <div style={{ marginTop: 8 }}>
           <div className="two">
-            <div><label>Будни (пн–пт), ₸</label><input inputMode="numeric" value={wd} onChange={(e) => setWd(e.target.value.replace(/\D/g, ''))} /></div>
-            <div><label>Выходные (сб, вс), ₸</label><input inputMode="numeric" value={we} onChange={(e) => setWe(e.target.value.replace(/\D/g, ''))} /></div>
+            <div><label>Смена «Ночь», ₸</label><input inputMode="numeric" value={rn} onChange={(e) => setRn(e.target.value.replace(/\D/g, ''))} /></div>
+            <div><label>Смена «День», ₸</label><input inputMode="numeric" value={rd} onChange={(e) => setRd(e.target.value.replace(/\D/g, ''))} /></div>
           </div>
           <button className="btn" disabled={busy} onClick={saveRates}>Сохранить ставки</button>
         </div>
@@ -572,7 +590,7 @@ function GuardPay({ db, onPay, onDelPayment, onReload }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600 }}>{r.fio}</div>
                 <div className="small">
-                  {r.days} дн. ({r.weekday} будн. + {r.weekend} вых.) · начислено {money(r.amount)}
+                  {r.days} смен ({r.night} ноч. + {r.day} дневн.) · начислено {money(r.amount)}
                 </div>
                 <div className="small">
                   выплачено <b style={{ color: 'var(--incd)' }}>{money(r.paid)}</b>
@@ -649,7 +667,7 @@ function PayModal({ row, onClose, onSaved }) {
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Уже выплачено</div><div className="v" style={{ fontSize: 15, color: 'var(--incd)' }}>{money(row?.paid)}</div></div>
       </div>
       <div className="small" style={{ margin: '8px 0' }}>
-        {row?.days} дн. ({row?.weekday} будн. + {row?.weekend} вых.) · долг <b style={{ color: 'var(--expd)' }}>{money(debt)}</b>
+        {row?.days} смен ({row?.night} ноч. + {row?.day} дневн.) · долг <b style={{ color: 'var(--expd)' }}>{money(debt)}</b>
       </div>
 
       <label>Сумма выплаты, ₸</label>
@@ -844,7 +862,10 @@ function FragmentCat({ name, data }) {
   );
 }
 
-function FinModal({ cats, onClose, onSaved, onNeedCats }) {
+// Категория зарплаты: в подкатегорию подставляем список наших сотрудников.
+const isSalaryCat = (name) => /зарплат|зп\b|оплата труда/i.test(String(name || ''));
+
+function FinModal({ cats, staff, onClose, onSaved, onNeedCats }) {
   const [type, setType] = useState('expense');
   const [cat, setCat] = useState('');
   const [sub, setSub] = useState('');
@@ -854,6 +875,10 @@ function FinModal({ cats, onClose, onSaved, onNeedCats }) {
   const [busy, setBusy] = useState(false);
 
   const tops = topCats(cats, type);
+  const catName = cats.find((x) => String(x.id) === String(cat))?.name || '';
+  const salary = isSalaryCat(catName);
+  // Для зарплаты подкатегория — это сотрудник; иначе обычные подкатегории.
+  const workers = (staff || []).map((x) => x.fio).filter(Boolean).sort((a, b) => a.localeCompare(b));
   const subs = cat ? subCats(cats, cat) : [];
   useEffect(() => { setCat(tops[0]?.id ?? ''); setSub(''); /* eslint-disable-next-line */ }, [type]);
   useEffect(() => { setSub(''); }, [cat]);
@@ -862,6 +887,7 @@ function FinModal({ cats, onClose, onSaved, onNeedCats }) {
     if (!cat) { onNeedCats(); return; }
     const a = parseFloat(amount);
     if (!a) return alert('Укажите сумму');
+    if (salary && !sub) return alert('Выберите сотрудника');
     const c = cats.find((x) => String(x.id) === String(cat));
     setBusy(true);
     try {
@@ -888,11 +914,30 @@ function FinModal({ cats, onClose, onSaved, onNeedCats }) {
           Нет категорий типа «{type === 'expense' ? 'расход' : 'доход'}». Создайте их в ⚙ Настройки → Категории.
         </div>
       )}
-      <label>Подкатегория (вид)</label>
-      <select value={sub} onChange={(e) => setSub(e.target.value)}>
-        <option value="">— без подкатегории —</option>
-        {subs.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
-      </select>
+      {salary ? (
+        <>
+          <label>Наши сотрудники</label>
+          {workers.length ? (
+            <select value={sub} onChange={(e) => setSub(e.target.value)}>
+              <option value="">— выберите сотрудника —</option>
+              {workers.map((w) => <option key={w} value={w}>{w}</option>)}
+            </select>
+          ) : (
+            <div className="small" style={{ background: 'var(--partbg)', color: 'var(--warnd)', padding: '8px 10px', borderRadius: 8, marginTop: 6 }}>
+              Работников пока нет. Заведите их в ⚙ Настройки → Работники.
+            </div>
+          )}
+          <div className="small" style={{ marginTop: 6 }}>Кому платим. Попадёт в отчёт как «Зарплата › {sub || '—'}».</div>
+        </>
+      ) : (
+        <>
+          <label>Подкатегория (вид)</label>
+          <select value={sub} onChange={(e) => setSub(e.target.value)}>
+            <option value="">— без подкатегории —</option>
+            {subs.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+          </select>
+        </>
+      )}
       <label>Сумма, ₸</label><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
       <label>Дата</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
       <label>Комментарий</label><input value={note} onChange={(e) => setNote(e.target.value)} />
@@ -903,7 +948,7 @@ function FinModal({ cats, onClose, onSaved, onNeedCats }) {
 }
 
 /* ===================== Shifts ===================== */
-const shiftLabel = (t) => t === 'day' ? 'День 08:00–20:00' : t === 'night' ? 'Ночь 20:00–08:00' : 'Своя';
+const shiftLabel = (t) => t === 'day' ? 'День (сутки)' : 'Ночь 20:00–08:00';
 
 /* Операции (для персонала): добавить смену + график */
 function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
@@ -933,7 +978,8 @@ function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
               <tr><th>Дата</th><th>Сотрудник</th><th>Должн.</th><th>Смена</th><th>Ч</th><th>Подтв.</th></tr>
               {sh.map((x) => {
                 const conf = x.confirmed ? <span style={{ color: 'var(--incd)', fontWeight: 700 }}>✓</span> : (x.role === 'Охрана' ? <span style={{ color: 'var(--warnd)' }}>ждёт</span> : '—');
-                const sm = x.checkIn ? (timeHM(x.checkIn) + '–' + (x.checkOut ? timeHM(x.checkOut) : '…')) : shiftLabel(x.shift);
+                const times = x.checkIn ? (timeHM(x.checkIn) + '–' + (x.checkOut ? timeHM(x.checkOut) : '…')) : '';
+                const sm = <>{shiftTypeLabel(x)}{times ? <span className="small"> · {times}</span> : ''}</>;
                 return <tr key={x.id}><td>{fmt(x.date)}</td><td style={{ fontWeight: 600 }}>{x.fio}</td><td>{x.role || ''}</td><td>{sm}</td><td>{x.checkIn && !x.checkOut ? '…' : (x.hours || '')}</td><td>{conf}</td></tr>;
               })}
             </tbody></table>
@@ -950,12 +996,22 @@ function ShiftsReport({ db, onPay, onDelPayment, onReload }) {
   const [to, setTo] = useState(todayStr());
   const [tabel, setTabel] = useState(null);
 
+  const rates = guardRates(db.settings);
+
   function buildTabel() {
     const rows0 = db.shifts.filter((x) => (!from || String(x.date).slice(0, 10) >= from) && (!to || String(x.date).slice(0, 10) <= to));
-    const agg = {};
-    rows0.forEach((x) => { const k = x.fio + '|' + (x.role || ''); if (!agg[k]) agg[k] = { name: x.fio, role: x.role, cnt: 0, h: 0 }; agg[k].cnt++; agg[k].h += (+x.hours || 0); });
-    const rows = Object.values(agg).sort((a, b) => b.h - a.h);
-    setTabel({ rows, total: rows.reduce((a, b) => a + b.h, 0), from, to });
+    const byName = {};
+    rows0.forEach((x) => {
+      const k = x.fio + '|' + (x.role || '');
+      if (!byName[k]) byName[k] = { name: x.fio, role: x.role, shifts: [] };
+      byName[k].shifts.push(x);
+    });
+    // Деньги считаем по видам смен теми же ставками, что и в блоке оплаты.
+    const rows = Object.values(byName).map((r) => {
+      const e = guardEarned(r.shifts, rates);
+      return { ...r, cnt: e.days, night: e.night, day: e.day, amount: e.amount };
+    }).sort((a, b) => b.amount - a.amount);
+    setTabel({ rows, total: rows.reduce((a, b) => a + b.amount, 0), from, to });
   }
 
   return (
@@ -973,12 +1029,20 @@ function ShiftsReport({ db, onPay, onDelPayment, onReload }) {
       {tabel && (
         <div className="card">
           <div style={{ fontWeight: 700 }}>Табель за период</div>
-          <div className="small" style={{ marginBottom: 8 }}>{tabel.from ? fmt(tabel.from) : 'начало'} – {tabel.to ? fmt(tabel.to) : 'сегодня'} · всего часов: {tabel.total}</div>
+          <div className="small" style={{ marginBottom: 8 }}>
+            {tabel.from ? fmt(tabel.from) : 'начало'} – {tabel.to ? fmt(tabel.to) : 'сегодня'} · начислено за период: <b>{money(tabel.total)}</b>
+          </div>
           {tabel.rows.length ? (
             <div style={{ overflow: 'auto' }}>
               <table><tbody>
-                <tr><th>Сотрудник</th><th>Должн.</th><th>Смен</th><th>Часов</th></tr>
-                {tabel.rows.map((r, i) => <tr key={i}><td style={{ fontWeight: 600 }}>{r.name}</td><td>{r.role || ''}</td><td>{r.cnt}</td><td style={{ fontWeight: 700 }}>{r.h}</td></tr>)}
+                <tr><th>Сотрудник</th><th>Должн.</th><th>Смен</th><th>Ночь</th><th>День</th><th>Начислено</th></tr>
+                {tabel.rows.map((r, i) => (
+                  <tr key={i}>
+                    <td style={{ fontWeight: 600 }}>{r.name}</td><td>{r.role || ''}</td>
+                    <td>{r.cnt}</td><td>{r.night}</td><td>{r.day}</td>
+                    <td style={{ fontWeight: 700 }}>{money(r.amount)}</td>
+                  </tr>
+                ))}
               </tbody></table>
             </div>
           ) : <div className="small">Нет смен.</div>}
@@ -988,33 +1052,69 @@ function ShiftsReport({ db, onPay, onDelPayment, onReload }) {
   );
 }
 
-function ShiftModal({ onClose, onSaved }) {
-  const [name, setName] = useState(''); const [role, setRole] = useState('Повар');
-  const [date, setDate] = useState(todayStr()); const [shift, setShift] = useState('day'); const [hours, setHours] = useState('12');
+/* Новая смена. Вид смены подставляется по дате (сб/вс — День, иначе Ночь),
+   но его всегда можно переключить вручную. */
+function ShiftModal({ db, onClose, onSaved }) {
+  const [name, setName] = useState('');
+  const [role, setRole] = useState('Охрана');
+  const [date, setDate] = useState(todayStr());
+  const [shift, setShift] = useState(defaultShiftType(todayStr()));
+  const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Пока вид смены не трогали руками — подстраиваем его под выбранную дату.
+  useEffect(() => { if (!touched) setShift(defaultShiftType(date)); }, [date, touched]);
+
+  const rates = guardRates(db?.settings);
+  const workers = (db?.staff || []).map((x) => x.fio).filter(Boolean);
+
+  function pickShift(t) { setShift(t); setTouched(true); }
+
   async function submit() {
     if (!name.trim()) return alert('Укажите сотрудника');
     setBusy(true);
-    try { await api('addShift', { name: name.trim(), role, date, shift, hours: parseFloat(hours) || 0 }); onSaved(); }
-    catch (e) { alert(e.message); } finally { setBusy(false); }
+    try {
+      await api('addShift', { name: name.trim(), role, date, shift, hours: shiftHours(shift) });
+      onSaved();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
+
   return (
     <>
       <h2>Новая смена</h2>
-      <label>Сотрудник</label><input value={name} onChange={(e) => setName(e.target.value)} />
+      <label>Сотрудник</label>
+      <input value={name} onChange={(e) => setName(e.target.value)} list="staff-list" placeholder="начните набирать ФИО" />
+      <datalist id="staff-list">{workers.map((w) => <option key={w} value={w} />)}</datalist>
+
       <label>Должность</label>
       <select value={role} onChange={(e) => setRole(e.target.value)}>{STAFF_ROLES.map((r) => <option key={r}>{r}</option>)}</select>
+
       <label>Дата</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+
       <label>Смена</label>
-      <select value={shift} onChange={(e) => setShift(e.target.value)}>
-        <option value="day">День 08–20</option><option value="night">Ночь 20–08</option><option value="custom">Своя</option>
-      </select>
-      <label>Часов</label><input type="number" value={hours} onChange={(e) => setHours(e.target.value)} />
+      <div className="pick2">
+        {SHIFT_TYPES.map((t) => (
+          <button key={t.key}
+            className={'pick' + (shift === t.key ? ' on' : '')}
+            onClick={() => pickShift(t.key)}>
+            <b>{t.label}</b>
+            <span>{t.time} · {money(t.key === 'day' ? rates.day : rates.night)}</span>
+          </button>
+        ))}
+      </div>
+      <div className="small" style={{ marginTop: 6 }}>
+        {touched
+          ? <>Вид смены выбран вручную.</>
+          : <>Подставлен по дате: {isWeekendDate(date) ? 'суббота или воскресенье — День' : 'будний день — Ночь'}.</>}
+      </div>
+
       <button className="btn" disabled={busy} onClick={submit}>Сохранить</button>
       <button className="btn sec" onClick={onClose}>Отмена</button>
     </>
   );
 }
+
+const isWeekendDate = (d) => defaultShiftType(d) === 'day';
 
 /* ===================== Report tab ===================== */
 function ReportTab({ db }) {
