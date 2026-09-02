@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react';
 import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { downloadXlsx } from '@/lib/xlsx';
-import { initials, fmt, timeHM, money, nightsNow, todayStr, monthStart, CITIZENSHIPS,
+import { initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
+         fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          DEFAULT_GUARD_RATES, guardEarned } from '@/lib/ui';
 
 const STAFF_ROLES = ['Повар', 'Помощник повара', 'Ресепшн', 'Уборка', 'Охрана', 'Другое'];
-const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [], payments: [], settings: {} };
+const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [], payments: [], settings: {}, bookings: [] };
 const topCats = (cats, t) => cats.filter((c) => c.type === t && !c.parent);
 const subCats = (cats, pid) => cats.filter((c) => String(c.parent || '') === String(pid));
 
@@ -105,7 +106,16 @@ export default function AdminPage() {
               onDelPayment={(id) => handleDelete('payment', id)}
               onReload={reload} />
           : <>
-              {tab === 'rooms' && <RoomsTab db={db} onFree={(n) => setModal({ type: 'checkin', room: n })} onOcc={(stay) => setModal({ type: 'room', stay })} />}
+              {tab === 'rooms' && <RoomsTab db={db}
+                onFree={(n) => setModal({ type: 'checkin', room: n })}
+                onOcc={(stay) => setModal({ type: 'room', stay })}
+                onBook={() => setModal({ type: 'booking' })}
+                onDelBooking={(id) => handleDelete('booking', id)}
+                onCloseBooking={async (b) => {
+                  if (!confirm(`Закрыть заявку на ${b.people} чел. от ${fmt(b.date)}?`)) return;
+                  await withBusy(() => api('updateBooking', { ...b, status: 'closed' }));
+                  await reload();
+                }} />}
               {tab === 'fin' && <FinTab db={db} onAdd={() => setModal({ type: 'fin' })} />}
               {tab === 'shifts' && <ShiftsTab db={db}
                 onAdd={() => setModal({ type: 'shift' })}
@@ -128,14 +138,15 @@ export default function AdminPage() {
       <Modal open={!!modal} onClose={closeModal}>
         {modal?.type === 'checkin' && <CheckinModal room={modal.room} guests={db.guests} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'room' && <RoomModal stay={modal.stay} onClose={closeModal}
-          onCheckout={async (id, departure) => {
-            const r = await withBusy(() => api('checkout', { id, departure }));
+          onCheckout={async (id, departure, departedAt) => {
+            const r = await withBusy(() => api('checkout', { id, departure, departedAt }));
             if (!r.ok) return alert(r.error || 'Ошибка');
             await afterSave();
           }} />}
         {modal?.type === 'fin' && <FinModal cats={db.categories} onClose={closeModal} onSaved={() => afterSave()} onNeedCats={() => { closeModal(); openSettings('cats'); }} />}
         {modal?.type === 'shift' && <ShiftModal onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'pay' && <PayModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
+        {modal?.type === 'booking' && <BookingModal onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'guest' && <GuestModal guest={modal.data} onClose={closeModal} onSaved={() => afterSave('guests')} />}
         {modal?.type === 'staff' && <StaffModal worker={modal.data} onClose={closeModal} onSaved={() => afterSave('staff')} />}
         {modal?.type === 'cat' && <CatModal cat={modal.data} parentId={modal.parentId} ctype={modal.ctype} onClose={closeModal} onSaved={() => afterSave('cats')} />}
@@ -159,6 +170,9 @@ export default function AdminPage() {
     } else if (kind === 'cat') {
       if (!confirm('Удалить категорию?')) return;
       await withBusy(() => api('deleteCategory', { id: arg })); await reload();
+    } else if (kind === 'booking') {
+      if (!confirm('Удалить заявку на бронь?')) return;
+      await withBusy(() => api('deleteBooking', { id: arg })); await reload();
     } else if (kind === 'payment') {
       if (!confirm('Удалить эту выплату? Долг пересчитается.')) return;
       await withBusy(() => api('deletePayment', { id: arg })); await reload();
@@ -249,7 +263,7 @@ function LoginForm({ onDone, setBusy }) {
 }
 
 /* ===================== Rooms ===================== */
-function RoomsTab({ db, onFree, onOcc }) {
+function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking }) {
   let occ = 0, free = 0;
   db.rooms.forEach((r) => { if (r.status === 'free') free++; else occ++; });
   return (
@@ -264,6 +278,8 @@ function RoomsTab({ db, onFree, onOcc }) {
         <div className="tile" style={{ background: 'var(--fullbg)' }}><div className="v" style={{ color: 'var(--expd)' }}>{occ}</div><div className="l" style={{ color: 'var(--expd)' }}>занято</div></div>
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="v" style={{ color: 'var(--incd)' }}>{free}</div><div className="l" style={{ color: 'var(--incd)' }}>свободно</div></div>
       </div>
+      <Bookings db={db} onBook={onBook} onDel={onDelBooking} onClose={onCloseBooking} />
+
       {groupByBlock(db.rooms, (r) => r.room).map(({ block, items, from, to }) => {
         const bfree = items.filter((r) => r.status === 'free').length;
         return (
@@ -293,13 +309,14 @@ function RoomsTab({ db, onFree, onOcc }) {
 function RoomModal({ stay: s, onClose, onCheckout }) {
   // Дата выбытия: по умолчанию сегодня, но её можно изменить — для поздних выселений.
   const [departure, setDeparture] = useState(todayStr());
+  const [depTime, setDepTime] = useState(nowTime());
   const arrival = String(s.arrival || '').slice(0, 10);
 
   function submit() {
     if (!departure) return alert('Укажите дату выбытия');
     if (arrival && departure < arrival) return alert('Дата выбытия раньше даты прибытия. Проверьте дату.');
-    if (!confirm(`Выселить ${s.fio} из комнаты №${s.room}?\n\nДата выбытия: ${fmt(departure)}.`)) return;
-    onCheckout(s.id, departure);
+    if (!confirm(`Выселить ${s.fio} из комнаты №${s.room}?\n\nВыбытие: ${fmt(departure)} ${depTime}.`)) return;
+    onCheckout(s.id, departure, toAstanaISO(departure, depTime));
   }
 
   return (
@@ -311,15 +328,18 @@ function RoomModal({ stay: s, onClose, onCheckout }) {
         {s.status === 'booked' ? <span className="chip a">бронь</span> : <span className="chip g">на смене</span>}
       </div>
       <div className="tiles">
-        <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Прибытие</div><div className="v" style={{ fontSize: 16, color: 'var(--incd)' }}>{fmt(s.arrival)}</div></div>
+        <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Прибытие</div><div className="v" style={{ fontSize: 13, color: 'var(--incd)' }}>{s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival)}</div></div>
         <div className="tile" style={{ background: 'var(--partbg)' }}><div className="l" style={{ color: 'var(--warnd)' }}>Суток</div><div className="v" style={{ fontSize: 16, color: 'var(--warnd)' }}>{nightsNow(s.arrival, departure)}</div></div>
       </div>
 
-      <label>Дата выбытия</label>
-      <input type="date" value={departure} onChange={(e) => setDeparture(e.target.value)} />
+      <label>Выбытие</label>
+      <div className="two">
+        <input type="date" value={departure} onChange={(e) => setDeparture(e.target.value)} />
+        <input type="time" value={depTime} onChange={(e) => setDepTime(e.target.value)} />
+      </div>
       <div className="small" style={{ marginTop: 6 }}>
-        Подставлен сегодняшний день — при необходимости выберите другую дату.
-        {departure !== todayStr() && <> <button className="link" onClick={() => setDeparture(todayStr())}>вернуть сегодня</button></>}
+        Время по Астане. Подставлены сегодняшний день и текущее время.
+        {departure !== todayStr() && <> <button className="link" onClick={() => { setDeparture(todayStr()); setDepTime(nowTime()); }}>вернуть сейчас</button></>}
       </div>
 
       <button className="btn red" onClick={submit}>✓ Выселить</button>
@@ -331,13 +351,15 @@ function RoomModal({ stay: s, onClose, onCheckout }) {
 function CheckinModal({ room, guests, onClose, onSaved }) {
   const [gid, setGid] = useState(guests[0]?.id ?? '');
   const [arrival, setArrival] = useState(todayStr());
+  const [arrTime, setArrTime] = useState(nowTime());
   const [busy, setBusy] = useState(false);
   async function submit() {
     if (!arrival) return alert('Укажите дату прибытия');
     const g = guests.find((x) => String(x.id) === String(gid));
     setBusy(true);
     try {
-      const r = await api('checkin', { guestId: gid, fio: g?.fio, room, arrival, source: 'ресепшн' });
+      const arrivedAt = toAstanaISO(arrival, arrTime);
+      const r = await api('checkin', { guestId: gid, fio: g?.fio, room, arrival, arrivedAt, source: 'ресепшн' });
       if (!r.ok) return alert(r.error || 'Ошибка');
       onSaved();
     } catch (e) { alert(e.message); } finally { setBusy(false); }
@@ -352,8 +374,14 @@ function CheckinModal({ room, guests, onClose, onSaved }) {
             <select value={gid} onChange={(e) => setGid(e.target.value)}>
               {guests.map((g) => <option key={g.id} value={g.id}>{g.fio}</option>)}
             </select>
-            <label>Прибытие</label><input type="date" value={arrival} onChange={(e) => setArrival(e.target.value)} />
-            <div className="small" style={{ marginTop: 6 }}>Дата выбытия не указывается — она проставится при выселении.</div>
+            <label>Прибытие</label>
+            <div className="two">
+              <input type="date" value={arrival} onChange={(e) => setArrival(e.target.value)} />
+              <input type="time" value={arrTime} onChange={(e) => setArrTime(e.target.value)} />
+            </div>
+            <div className="small" style={{ marginTop: 6 }}>
+              Время по Астане. Дата выбытия не указывается — она проставится при выселении.
+            </div>
             <button className="btn" disabled={busy} onClick={submit}>Заселить</button>
           </>}
       <button className="btn sec" onClick={onClose}>Отмена</button>
@@ -361,6 +389,97 @@ function CheckinModal({ room, guests, onClose, onSaved }) {
   );
 }
 
+
+/* ===================== Заявки на бронь =====================
+   Бронируем не конкретные комнаты, а количество человек на дату:
+   завод сообщает «приедет 5 человек», ресепшн держит места. */
+function Bookings({ db, onBook, onDel, onClose }) {
+  const list = (db.bookings || []).filter((b) => b.status !== 'closed');
+  const today = todayStr();
+  const soon = list.filter((b) => b.date >= today);
+  const people = soon.reduce((a, b) => a + (+b.people || 0), 0);
+  const free = (db.rooms || []).filter((r) => r.status === 'free').length;
+
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <h2 style={{ fontSize: 15, margin: 0 }}>Заявки на бронь</h2>
+        <span className="small">ожидаем {people} чел. · свободно {free}</span>
+      </div>
+      <div className="small" style={{ marginTop: 4 }}>
+        Бронь по количеству человек, комнату гость выберет при заезде.
+      </div>
+      <button className="btn" onClick={onBook}>+ Заявка на бронь</button>
+
+      {list.length ? (
+        <div style={{ marginTop: 10 }}>
+          {list.map((b) => {
+            const past = b.date < today;
+            return (
+              <div key={b.id} className="list-item">
+                <div className="avatar" style={{ background: past ? 'var(--warn)' : 'var(--primary)' }}>{b.people}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600 }}>{fmt(b.date)} · {b.people} чел.</div>
+                  <div className="small">
+                    {[b.company, b.note].filter(Boolean).join(' · ') || 'без комментария'}
+                    {past && <span style={{ color: 'var(--warnd)' }}> · дата прошла</span>}
+                  </div>
+                </div>
+                <button className="link" onClick={() => onClose(b)}>закрыть</button>
+                &nbsp;&nbsp;
+                <button className="link" style={{ color: 'var(--full)' }} onClick={() => onDel(b.id)}>удал.</button>
+              </div>
+            );
+          })}
+        </div>
+      ) : <div className="small" style={{ marginTop: 8 }}>Активных заявок нет.</div>}
+    </div>
+  );
+}
+
+function BookingModal({ onClose, onSaved }) {
+  const [date, setDate] = useState(todayStr());
+  const [people, setPeople] = useState('1');
+  const [company, setCompany] = useState(DEFAULT_COMPANY);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    const n = Number(people) || 0;
+    if (!date) return alert('Укажите дату');
+    if (!(n > 0)) return alert('Укажите количество человек');
+    setBusy(true);
+    try {
+      const r = await api('addBooking', { date, people: n, company: company.trim(), note: note.trim() });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      onSaved();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <h2>Заявка на бронь</h2>
+      <div className="small">Сколько человек ждём и на какую дату. Комнаты выберутся при заезде.</div>
+      <label>Дата заезда</label>
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      <label>Количество человек</label>
+      <input inputMode="numeric" value={people}
+        onChange={(e) => setPeople(e.target.value.replace(/\D/g, '').slice(0, 3))} />
+      <div className="chips-row">
+        {[1, 2, 5, 10].map((n) => (
+          <button key={n} className="chipbtn" onClick={() => setPeople(String(n))}>{n}</button>
+        ))}
+      </div>
+      <label>Компания / вахта</label>
+      <input value={company} onChange={(e) => setCompany(e.target.value)} />
+      <label>Комментарий (необязательно)</label>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="например: приедут вечером" />
+      <button className="btn" disabled={busy} onClick={submit}>✓ Сохранить заявку</button>
+      <button className="btn sec" onClick={onClose}>Отмена</button>
+      <Busy show={busy} />
+    </>
+  );
+}
 
 /* ===================== Оплата охраны =====================
    Начисляем за ДЕНЬ выхода: будни и выходные по разным ставкам.
@@ -1006,7 +1125,7 @@ function Settings({ db, seg, sess, users, setSeg, setModal, onDelete, backToApp 
             {db.guests.map((x) => {
               const inr = db.stays.find((s) => String(s.guestId) === String(x.id) && s.status !== 'closed');
               return <Row key={x.id} av={initials(x.fio)} title={x.fio}
-                sub={<>{[x.iin && 'ИИН ' + x.iin, x.company, x.citizenship, x.phone].filter(Boolean).join(' · ')}{inr ? <> · <b style={{ color: 'var(--incd)' }}>№{inr.room}</b></> : ''}</>}
+                sub={<>{[x.position, x.company, x.destination, x.iin && 'ИИН ' + x.iin, x.phone].filter(Boolean).join(' · ')}{inr ? <> · <b style={{ color: 'var(--incd)' }}>№{inr.room}</b></> : ''}</>}
                 onEdit={() => setModal({ type: 'guest', data: x })}
                 onDel={() => onDelete('guest', x.id)} />;
             })}
@@ -1129,7 +1248,13 @@ function GuestModal({ guest, onClose, onSaved }) {
   const known = CITIZENSHIPS.includes(guest?.citizenship || '');
   const [fio, setFio] = useState(guest?.fio || '');
   const [iin, setIin] = useState(guest?.iin || '');
+  const [docNo, setDocNo] = useState(guest?.docNo || '');
+  const [birthYear, setBirthYear] = useState(guest?.birthYear || '');
   const [company, setCompany] = useState(guest?.company ?? DEFAULT_COMPANY);
+  const knownPos = POSITIONS.includes(guest?.position || '');
+  const [pos, setPos] = useState(guest?.position ? (knownPos ? guest.position : 'Другое') : 'Инженер');
+  const [posOther, setPosOther] = useState(guest?.position && !knownPos ? guest.position : '');
+  const [destination, setDestination] = useState(guest?.destination || '');
   const [cit, setCit] = useState(guest?.citizenship ? (known ? guest.citizenship : 'Другое') : 'Казахстан');
   const [citOther, setCitOther] = useState(guest?.citizenship && !known ? guest.citizenship : '');
   const [phone, setPhone] = useState(guest?.phone ? formatPhone(guest.phone) : '+7 ');
@@ -1139,7 +1264,16 @@ function GuestModal({ guest, onClose, onSaved }) {
     if (!iin.trim()) return alert('Укажите ИИН');
     const citizenship = cit === 'Другое' ? citOther.trim() : cit;
     if (!citizenship) return alert('Укажите гражданство');
-    const payload = { fio: fio.trim(), iin: iin.trim(), company: company.trim(), citizenship, phone: cleanPhone(phone) };
+    const position = pos === 'Другое' ? posOther.trim() : pos;
+    const by = String(birthYear).replace(/\D/g, '');
+    if (by && (by.length !== 4 || +by < 1930 || +by > new Date().getFullYear())) {
+      return alert('Год рождения указан неверно. Пример: 1988');
+    }
+    const payload = {
+      fio: fio.trim(), iin: iin.trim(), docNo: docNo.trim(), birthYear: by,
+      company: company.trim(), position, destination: destination.trim(),
+      citizenship, phone: cleanPhone(phone),
+    };
     setBusy(true);
     try {
       const r = edit ? await api('updateGuest', { id: guest.id, ...payload }) : await api('addGuest', payload);
@@ -1151,7 +1285,18 @@ function GuestModal({ guest, onClose, onSaved }) {
       <h2>{edit ? 'Изменить гостя' : 'Новый гость'}</h2>
       <label>ФИО</label><input value={fio} onChange={(e) => setFio(e.target.value)} />
       <label>ИИН</label><input value={iin} onChange={(e) => setIin(e.target.value)} inputMode="numeric" placeholder="12 цифр" />
+      <label>Номер документа</label><input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="удостоверение или паспорт" />
+      <label>Год рождения</label>
+      <input value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/\D/g, '').slice(0, 4))}
+        inputMode="numeric" placeholder="например 1988" />
       <label>Компания / вахта</label><input value={company} onChange={(e) => setCompany(e.target.value)} />
+      <label>Должность</label>
+      <select value={pos} onChange={(e) => setPos(e.target.value)}>
+        {POSITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      {pos === 'Другое' && <input value={posOther} onChange={(e) => setPosOther(e.target.value)} placeholder="укажите должность" />}
+      <label>Куда (объект / цех)</label>
+      <input value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="например: ремонтный цех" />
       <label>Гражданство</label>
       <select value={cit} onChange={(e) => setCit(e.target.value)}>
         {CITIZENSHIPS.map((c) => <option key={c} value={c}>{c}</option>)}
