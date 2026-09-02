@@ -89,6 +89,14 @@ td{padding:8px 6px;border-bottom:1px solid var(--line)}
 .chips-row{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
 .chipbtn{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
 .chipbtn.on{background:var(--primary);border-color:var(--primary);color:#fff}
+/* Переключатель-фильтр: сразу видно, что это выбор, а не подписи */
+.seg{display:flex;gap:3px;padding:3px;border-radius:999px;background:var(--panel);border:1px solid var(--line);margin:4px 0 0}
+.seg button{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:5px;padding:9px 8px;border:none;border-radius:999px;background:transparent;color:var(--muted);font-size:12.5px;font-weight:600;font-family:inherit;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seg button b{font-weight:800;color:var(--ink)}
+.seg button.on{background:var(--primary);color:#fff;box-shadow:0 1px 3px rgba(15,23,42,.22)}
+.seg button.on b{color:#fff}
+.seg button:active{transform:translateY(1px)}
+.seghint{font-size:12px;color:var(--muted);margin-top:6px}
 .roomchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
 .rchip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:8px;font-size:12px;font-weight:700;border:1px solid var(--line)}
 .rchip i{font-style:normal;font-weight:500;font-size:11px;opacity:.85;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
