@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS guests (
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS iin         TEXT DEFAULT '';
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS citizenship TEXT DEFAULT '';
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS doc_no      TEXT DEFAULT '';   -- номер документа
-ALTER TABLE guests ADD COLUMN IF NOT EXISTS birth_year  TEXT DEFAULT '';   -- год рождения
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS birth_year  TEXT DEFAULT '';   -- дата рождения 'ГГГГ-ММ-ДД'
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS position    TEXT DEFAULT '';   -- должность
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS destination TEXT DEFAULT '';   -- куда (объект/цех)
 
