@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api, getSess, setSess, clearSess, getLastLogin, forgetMe, REPORT_SESS_KEY as SK } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
+import { useLive, liveLabel } from '@/lib/live';
 import { fmt, fmtDateTime, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
 import { fuzzyScore } from '@/lib/fuzzy';
 import { downloadXlsx } from '@/lib/xlsx';
@@ -63,6 +64,9 @@ export default function ReportPage() {
       setBookings(Array.isArray(d?.bookings) ? d.bookings : []);
     } catch { setRows([]); setRooms([]); setBookings([]); } finally { setBusy(false); }
   }
+
+  // Отчёт тоже освежается сам, пока вкладка открыта.
+  const { checkedAt } = useLive(render, { enabled: authed && !req });
 
   /* ---------- текущая занятость (на сейчас) ---------- */
   const active = rows.filter((s) => s.status !== 'closed');
@@ -209,7 +213,7 @@ export default function ReportPage() {
         {/* --- Период и выгрузка --- */}
         <div className="card noprint">
           <h2>Отчёт о проживании</h2>
-          <div className="small">Данные обновляются автоматически. Только просмотр.</div>
+          <div className="small">🟢 {liveLabel(checkedAt)}. Только просмотр.</div>
 
           <div className="chips-row">
             <button className={'chipbtn' + (from === todayStr() && to === todayStr() ? ' on' : '')} onClick={setToday}>Сегодня</button>
