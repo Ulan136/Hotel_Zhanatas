@@ -3,9 +3,9 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api, getSess, setSess, clearSess, getLastLogin, forgetMe, REPORT_SESS_KEY as SK } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
-import { fmt, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
+import { fmt, fmtDateTime, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
 import { fuzzyScore } from '@/lib/fuzzy';
-import { downloadXlsx } from '@/lib/xlsx';
+import { downloadXlsx, shareXlsx, canShareFiles } from '@/lib/xlsx';
 
 const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
 
@@ -27,6 +27,10 @@ export default function ReportPage() {
   const [to, setTo] = useState(todayStr());
   const [q, setQ] = useState('');
   const [who, setWho] = useState('all'); // all | living | left
+  const [booked, setBooked] = useState(0);
+  const [canShare, setCanShare] = useState(false);
+
+  useEffect(() => { setCanShare(canShareFiles()); }, []);
 
   useEffect(() => {
     const s = getSess(SK);
@@ -56,6 +60,7 @@ export default function ReportPage() {
       setRows(Array.isArray(d?.rows) ? d.rows : []);
       setRooms(Array.isArray(d?.rooms) ? d.rooms : []);
       setShowRooms(cfg?.report_show_rooms === '1');
+      setBooked(Number(d?.booked) || 0);
     } catch { setRows([]); setRooms([]); } finally { setBusy(false); }
   }
 
@@ -110,27 +115,38 @@ export default function ReportPage() {
     setTo(todayStr());
   }
 
-  function exportExcel() {
-    const head = ['№', 'ФИО', 'ИИН', 'Телефон', 'Компания', 'Гражданство',
-      ...(showRooms ? ['Блок', 'Комната'] : []),
-      'Прибытие', 'Выбытие', 'Суток', 'Статус'];
+  /* Выгрузка в формате, который принимает завод:
+     дата заезда · дата выезда · ФИО · должность, а сводка справа — только в первой строке. */
+  function buildReportRows() {
+    const head = ['дата заезда', 'дата выезда', 'фамилия имя отчество', 'должность',
+      'количество занятых номеров', 'количество свободных номеров', 'количество гостей по заявке'];
     const body = list.map((s, i) => [
-      i + 1, s.fio, s.iin || '', s.phone ? formatPhone(s.phone) : '', s.company || '', s.citizenship || '',
-      ...(showRooms ? [blockOf(s.room), s.room] : []),
-      fmt(s.arrival), s.departure ? fmt(s.departure) : '—',
-      nightsNow(s.arrival, s.departure), statusText(s.status),
+      s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival),
+      s.departure ? (s.departedAt ? fmtDateTime(s.departedAt) : fmt(s.departure)) : '',
+      s.fio,
+      s.position || '',
+      // Сводные числа проставляются один раз — в первой строке, как в образце.
+      i === 0 ? busyRooms.size : '',
+      i === 0 ? freeRooms.length : '',
+      i === 0 ? booked : '',
     ]);
-    const meta = [
-      ['MEDINA — отчёт о проживании (вахтовый метод)'],
-      ['Период', period],
-      ['Показаны', who === 'living' ? 'только проживающие' : who === 'left' ? 'только выехавшие' : 'все'],
-      ['Проживаний в отчёте', list.length, 'человеко-суток', totalNights],
-      ['Свободно комнат', freeRooms.length, 'Занято комнат', busyRooms.size, 'Всего', rooms.length],
-      [],
-    ];
-    const rows = [...meta, head, ...body];
-    downloadXlsx(`MEDINA_report_${from}_${to}.xlsx`, rows,
-      { sheetName: 'Отчёт', boldRows: [0, meta.length] });
+    return { rows: [['MEDINA'], head, ...body], head };
+  }
+
+  function exportExcel() {
+    const { rows } = buildReportRows();
+    downloadXlsx(`MEDINA_${from}_${to}.xlsx`, rows, { sheetName: 'Отчёт', boldRows: [0, 1] });
+  }
+
+  async function shareExcel() {
+    const { rows } = buildReportRows();
+    const okShared = await shareXlsx(`MEDINA_${from}_${to}.xlsx`, rows,
+      { sheetName: 'Отчёт', boldRows: [0, 1] },
+      `MEDINA — проживание за ${period}`);
+    if (!okShared) {
+      alert('Ваш браузер не умеет отправлять файл напрямую. Файл сейчас скачается — отправьте его вручную.');
+      exportExcel();
+    }
   }
 
   if (!authed) {
@@ -194,6 +210,14 @@ export default function ReportPage() {
             <button className="btn sec" style={{ margin: 0 }} onClick={() => window.print()}>🖨 PDF / печать</button>
             <button className="btn sec" style={{ margin: 0 }} onClick={exportExcel}>⤓ Excel</button>
           </div>
+          <button className="btn" style={{ marginTop: 8 }} onClick={shareExcel}>
+            ↗ Поделиться отчётом
+          </button>
+          {!canShare && (
+            <div className="small" style={{ marginTop: 4 }}>
+              На этом устройстве системное «Поделиться» недоступно — файл просто скачается.
+            </div>
+          )}
           <div className="small" style={{ marginTop: 6 }}>
             В PDF и Excel уходит то, что видно ниже, — с учётом периода и поиска.
           </div>
@@ -228,7 +252,9 @@ export default function ReportPage() {
               <div className="l" style={{ color: 'var(--expd)' }}>занято комнат</div>
             </div>
           </div>
-          <div className="small" style={{ marginTop: 6 }}>Всего комнат в гостинице: {rooms.length}.</div>
+          <div className="small" style={{ marginTop: 6 }}>
+            Всего комнат в гостинице: {rooms.length} · ожидается по заявкам: <b>{booked}</b> чел.
+          </div>
         </div>
 
         {/* --- Поиск и таблица --- */}
@@ -262,23 +288,24 @@ export default function ReportPage() {
             <table>
               <tbody>
                 <tr>
-                  <th>ФИО</th><th>ИИН</th><th>Телефон</th><th>Компания</th>
+                  <th>ФИО</th><th>Должность</th><th>ИИН</th><th>Телефон</th><th>Компания</th>
                   {showRooms && <th>Комн.</th>}
-                  <th>Прибытие</th><th>Выбытие</th><th>Сут.</th><th>Статус</th>
+                  <th>Заезд</th><th>Выезд</th><th>Сут.</th><th>Статус</th>
                 </tr>
                 {list.length ? list.map((s) => (
                   <tr key={s.id}>
                     <td>{s.fio}</td>
+                    <td>{s.position || '—'}</td>
                     <td>{s.iin || '—'}</td>
                     <td>{s.phone ? formatPhone(s.phone) : '—'}</td>
                     <td>{s.company || '—'}</td>
                     {showRooms && <td>№{s.room}</td>}
-                    <td>{fmt(s.arrival)}</td>
-                    <td>{s.departure ? fmt(s.departure) : '—'}</td>
+                    <td>{s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival)}</td>
+                    <td>{s.departure ? (s.departedAt ? fmtDateTime(s.departedAt) : fmt(s.departure)) : '—'}</td>
                     <td>{nightsNow(s.arrival, s.departure)}</td>
                     <td>{statusText(s.status)}</td>
                   </tr>
-                )) : <tr><td colSpan={showRooms ? 9 : 8} className="small">Ничего не найдено за выбранный период.</td></tr>}
+                )) : <tr><td colSpan={showRooms ? 10 : 9} className="small">Ничего не найдено за выбранный период.</td></tr>}
               </tbody>
             </table>
           </div>
