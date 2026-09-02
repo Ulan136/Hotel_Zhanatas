@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
-import { initials, fmt, timeHM, hoursText, todayStr } from '@/lib/ui';
+import { initials, fmt, timeHM, hoursText, todayStr, toAstanaISO,
+         defaultShiftType, shiftTypeLabel } from '@/lib/ui';
 
 // ── помощники по времени ──────────────────────────────────────
 function addDays(dateStr, n) {
@@ -11,20 +12,13 @@ function addDays(dateStr, n) {
   const dt = new Date(y, m - 1, d + n);
   return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
 }
-function iso(dateStr, time) { return new Date(`${dateStr}T${time}:00`).toISOString(); }
-function calcHours(inT, outT) {
-  const [ih, im] = inT.split(':').map(Number);
-  const [oh, om] = outT.split(':').map(Number);
-  let mins = (oh * 60 + om) - (ih * 60 + im);
-  if (mins <= 0) mins += 24 * 60; // ночная смена через полночь
-  return Math.round((mins / 60) * 100) / 100;
-}
-// Возвращает {inTime, outTime, outDate, hours} для выбранного графика
-function planShift(type, date, inTime, outTime) {
-  if (type === 'day') return { inTime: '08:00', outTime: '20:00', outDate: date, hours: 12 };
-  if (type === 'night') return { inTime: '20:00', outTime: '08:00', outDate: addDays(date, 1), hours: 12 };
-  const out = (outTime <= inTime) ? addDays(date, 1) : date; // своя, возможно через полночь
-  return { inTime, outTime, outDate: out, hours: calcHours(inTime, outTime) };
+// Время смены записываем по Астане, а не по часам устройства.
+const iso = (dateStr, time) => toAstanaISO(dateStr, time);
+/* Возвращает {inTime, outTime, outDate, hours} для выбранного вида смены.
+   Видов ровно два: «День» — сутки, «Ночь» — 12 часов с 20:00 до 08:00. */
+function planShift(type, date) {
+  if (type === 'day') return { inTime: '08:00', outTime: '08:00', outDate: addDays(date, 1), hours: 24 };
+  return { inTime: '20:00', outTime: '08:00', outDate: addDays(date, 1), hours: 12 };
 }
 
 export default function GuardPage() {
@@ -35,10 +29,9 @@ export default function GuardPage() {
   const [manualName, setManualName] = useState('');
 
   const [mode, setMode] = useState('schedule');  // schedule | now
-  const [shiftType, setShiftType] = useState('day');
+  const [shiftType, setShiftType] = useState(defaultShiftType(todayStr()));
+  const [shiftTouched, setShiftTouched] = useState(false);
   const [date, setDate] = useState(todayStr());
-  const [inTime, setInTime] = useState('08:00');
-  const [outTime, setOutTime] = useState('20:00');
   const [live, setLive] = useState({});          // статус живой смены (для режима «сейчас»)
   const [done, setDone] = useState(null);
   const [savedCount, setSavedCount] = useState(0);
@@ -54,11 +47,18 @@ export default function GuardPage() {
     setName(n); setBusy(true);
     try { setLive(await api('guardStatus', { name: n })); }
     catch { setLive({}); } finally { setBusy(false); }
-    setDate(todayStr()); setShiftType('day'); setInTime('08:00'); setOutTime('20:00');
+    setDate(todayStr()); setShiftType(defaultShiftType(todayStr())); setShiftTouched(false);
     setSavedCount(0); setMode('schedule'); setScreen('shift');
   }
 
-  const plan = planShift(shiftType, date, inTime, outTime);
+  // Пока вид смены не выбирали руками — он следует за датой (сб/вс — День).
+  function changeDate(d) {
+    setDate(d);
+    if (!shiftTouched) setShiftType(defaultShiftType(d));
+  }
+  function pickShift(t) { setShiftType(t); setShiftTouched(true); }
+
+  const plan = planShift(shiftType, date);
 
   async function saveShift() {
     setBusy(true);
@@ -72,7 +72,7 @@ export default function GuardPage() {
       setDone({
         title: 'Смена записана', name,
         rows: {
-          'График': shiftType === 'day' ? 'День' : shiftType === 'night' ? 'Ночь' : 'Своя',
+          'Смена': shiftTypeLabel(shiftType),
           'Дата': fmt(date),
           'Приход': plan.inTime, 'Уход': plan.outTime,
           'Часы': hoursText(plan.hours),
@@ -104,7 +104,7 @@ export default function GuardPage() {
 
   const segBtn = (val, label, active) => (
     <button
-      onClick={() => setShiftType(val)}
+      onClick={() => pickShift(val)}
       style={{
         flex: 1, padding: '12px 4px', borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: 'pointer',
         border: '1px solid var(--line)',
@@ -168,28 +168,20 @@ export default function GuardPage() {
             {mode === 'schedule' ? (
               <div className="card">
                 <h2 style={{ fontSize: 16 }}>Записать смену</h2>
-                <label>График</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  {segBtn('day', 'День\n08–20', shiftType === 'day')}
-                  {segBtn('night', 'Ночь\n20–08', shiftType === 'night')}
-                  {segBtn('custom', 'Своя', shiftType === 'custom')}
-                </div>
-
                 <label>Дата</label>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                <input type="date" value={date} onChange={(e) => changeDate(e.target.value)} />
 
-                {shiftType === 'custom' && (
-                  <div style={{ display: 'flex', gap: 10 }}>
-                    <div style={{ flex: 1 }}>
-                      <label>Приход</label>
-                      <input type="time" value={inTime} onChange={(e) => setInTime(e.target.value)} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label>Уход</label>
-                      <input type="time" value={outTime} onChange={(e) => setOutTime(e.target.value)} />
-                    </div>
-                  </div>
-                )}
+                <label>Смена</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {segBtn('night', 'Ночь\n20–08', shiftType === 'night')}
+                  {segBtn('day', 'День\nсутки', shiftType === 'day')}
+                </div>
+                <div className="small" style={{ marginTop: 6 }}>
+                  {shiftTouched ? 'Смена выбрана вручную.'
+                    : (defaultShiftType(date) === 'day'
+                        ? 'Суббота или воскресенье — подставлена дневная смена.'
+                        : 'Будний день — подставлена ночная смена.')}
+                </div>
 
                 <div className="tile" style={{ background: 'var(--eef)', marginTop: 12 }}>
                   <div className="l" style={{ color: 'var(--primd)' }}>
