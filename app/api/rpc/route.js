@@ -299,6 +299,18 @@ const handlers = {
     return ok({ ok: true });
   },
 
+  // Переключить вид смены у уже записанной смены (ошиблись при вводе).
+  async setShiftType({ id, shift }) {
+    const t = shift === 'day' ? 'day' : 'night';
+    await sql`UPDATE shifts SET shift = ${t}, hours = ${t === 'day' ? 24 : 12}
+              WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
+  async deleteShift({ id }) {
+    await sql`DELETE FROM shifts WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
+
   /* ---------- Заявки на бронь (числом человек, без привязки к комнатам) ---------- */
   async bookings() {
     const rows = await sql`SELECT id, bdate::text AS date, people, company, note, status,
