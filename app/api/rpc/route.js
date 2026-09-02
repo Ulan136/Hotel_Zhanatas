@@ -226,6 +226,19 @@ const handlers = {
     }
     return ok({ ok: true });
   },
+  /* Правка даты заезда. Нужна ресепшну: в спешке дату иногда вбивают
+     неверно (например 19.09 вместо 19.08), и это ломает счёт суток. */
+  async updateStay({ id, arrival, arrivedAt }) {
+    if (!arrival) return fail('Укажите дату прибытия');
+    const rows = await sql`SELECT departure::text AS departure, status FROM stays WHERE id = ${Number(id)}`;
+    if (!rows.length) return fail('Заселение не найдено');
+    const dep = rows[0].departure;
+    if (dep && arrival > dep) return fail('Дата прибытия позже даты выбытия (' + dep + ')');
+    await sql`UPDATE stays SET arrival = ${arrival}, arrived_at = ${arrivedAt || null}
+              WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
+
   // Дата выбытия приходит со страницы гостя (по умолчанию сегодня, но её можно изменить).
   async checkout({ id, departure, departedAt }) {
     const rows = await sql`SELECT arrival::text AS arrival FROM stays WHERE id = ${Number(id)}`;
