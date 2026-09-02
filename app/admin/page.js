@@ -7,7 +7,7 @@ import { initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
          fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          DEFAULT_GUARD_RATES, guardEarned, SHIFT_TYPES, defaultShiftType, shiftHours,
-         shiftTypeLabel } from '@/lib/ui';
+         shiftTypeLabel, shiftTypeOf } from '@/lib/ui';
 
 const STAFF_ROLES = ['Повар', 'Помощник повара', 'Ресепшн', 'Уборка', 'Охрана', 'Другое'];
 const EMPTY = { rooms: [], guests: [], stays: [], finance: [], shifts: [], staff: [], categories: [], guards: [], payments: [], settings: {}, bookings: [] };
@@ -954,6 +954,15 @@ const shiftLabel = (t) => t === 'day' ? 'День (сутки)' : 'Ночь 20:0
 function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
   const sh = db.shifts.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   const hours = sh.reduce((a, b) => a + (+b.hours || 0), 0);
+  const [switching, setSwitching] = useState(0);
+
+  // Вид смены можно поправить прямо в графике — от него зависит сумма.
+  async function flipShift(x) {
+    const next = shiftTypeOf(x) === 'day' ? 'night' : 'day';
+    setSwitching(x.id);
+    try { await api('setShiftType', { id: x.id, shift: next }); await onReload?.(); }
+    catch (e) { alert(e.message); } finally { setSwitching(0); }
+  }
 
   return (
     <>
@@ -972,6 +981,7 @@ function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
 
       <div className="card">
         <h2 style={{ fontSize: 15 }}>График смен</h2>
+        <div className="small">Вид смены в таблице можно нажать и переключить — сумма пересчитается.</div>
         {sh.length ? (
           <div style={{ overflow: 'auto' }}>
             <table><tbody>
@@ -979,8 +989,22 @@ function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
               {sh.map((x) => {
                 const conf = x.confirmed ? <span style={{ color: 'var(--incd)', fontWeight: 700 }}>✓</span> : (x.role === 'Охрана' ? <span style={{ color: 'var(--warnd)' }}>ждёт</span> : '—');
                 const times = x.checkIn ? (timeHM(x.checkIn) + '–' + (x.checkOut ? timeHM(x.checkOut) : '…')) : '';
-                const sm = <>{shiftTypeLabel(x)}{times ? <span className="small"> · {times}</span> : ''}</>;
-                return <tr key={x.id}><td>{fmt(x.date)}</td><td style={{ fontWeight: 600 }}>{x.fio}</td><td>{x.role || ''}</td><td>{sm}</td><td>{x.checkIn && !x.checkOut ? '…' : (x.hours || '')}</td><td>{conf}</td></tr>;
+                return (
+                  <tr key={x.id}>
+                    <td>{fmt(x.date)}</td>
+                    <td style={{ fontWeight: 600 }}>{x.fio}</td>
+                    <td>{x.role || ''}</td>
+                    <td>
+                      <button className="link" disabled={switching === x.id} onClick={() => flipShift(x)}
+                        title="Нажмите, чтобы поменять вид смены">
+                        {shiftTypeLabel(x)}
+                      </button>
+                      {times ? <span className="small"> · {times}</span> : ''}
+                    </td>
+                    <td>{x.checkIn && !x.checkOut ? '…' : (x.hours || '')}</td>
+                    <td>{conf}</td>
+                  </tr>
+                );
               })}
             </tbody></table>
           </div>
