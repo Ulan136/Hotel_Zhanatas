@@ -5,7 +5,8 @@ import { api, getSess, setSess, clearSess, getLastLogin, forgetMe, REPORT_SESS_K
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { fmt, fmtDateTime, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
 import { fuzzyScore } from '@/lib/fuzzy';
-import { downloadXlsx, shareXlsx, canShareFiles } from '@/lib/xlsx';
+import { downloadXlsx } from '@/lib/xlsx';
+import { downloadPdf } from '@/lib/pdf';
 
 const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
 
@@ -30,10 +31,6 @@ export default function ReportPage() {
   const [booked, setBooked] = useState(0);
   const [bookings, setBookings] = useState([]);
   const [req, setReq] = useState(false);       // открыта форма заявки
-  const [canShare, setCanShare] = useState(false);
-
-  useEffect(() => { setCanShare(canShareFiles()); }, []);
-
   useEffect(() => {
     const s = getSess(SK);
     if (s) { setAuthed(true); render(); return; }
@@ -144,15 +141,28 @@ export default function ReportPage() {
     downloadXlsx(`MEDINA_${from}_${to}.xlsx`, rows, { sheetName: 'Отчёт', boldRows: [0, 1] });
   }
 
-  async function shareExcel() {
-    const { rows } = buildReportRows();
-    const okShared = await shareXlsx(`MEDINA_${from}_${to}.xlsx`, rows,
-      { sheetName: 'Отчёт', boldRows: [0, 1] },
-      `MEDINA — проживание за ${period}`);
-    if (!okShared) {
-      alert('Ваш браузер не умеет отправлять файл напрямую. Файл сейчас скачается — отправьте его вручную.');
-      exportExcel();
-    }
+  /* PDF собираем сами — получается обычный файл, который можно
+     сохранить и отправить, а не только распечатать. */
+  function exportPdf() {
+    const { head } = buildReportRows();
+    const body = list.map((s, i) => [
+      s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival),
+      s.departure ? (s.departedAt ? fmtDateTime(s.departedAt) : fmt(s.departure)) : '',
+      s.fio,
+      s.position || '',
+      i === 0 ? String(busyRooms.size) : '',
+      i === 0 ? String(freeRooms.length) : '',
+      i === 0 ? String(booked) : '',
+    ]);
+    // Колонкам с длинными заголовками даём больше места.
+    const widths = [120, 120, 175, 150, 120, 120, 120];
+    downloadPdf(`MEDINA_${from}_${to}.pdf`, {
+      title: `MEDINA · ${period}`,
+      subtitle: `Отчёт о проживании · записей: ${body.length} · свободно комнат: ${freeRooms.length} · занято: ${busyRooms.size}`,
+      columns: head.map((t, i) => ({ title: t, width: widths[i], align: i >= 4 ? 'right' : 'left' })),
+      rows: body,
+      footer: `MEDINA · сформировано ${fmtDateTime(new Date().toISOString())}`,
+    });
   }
 
   if (!authed) {
@@ -213,19 +223,12 @@ export default function ReportPage() {
           </div>
 
           <div className="two" style={{ marginTop: 10 }}>
-            <button className="btn sec" style={{ margin: 0 }} onClick={() => window.print()}>🖨 PDF / печать</button>
+            <button className="btn sec" style={{ margin: 0 }} onClick={exportPdf}>⤓ PDF</button>
             <button className="btn sec" style={{ margin: 0 }} onClick={exportExcel}>⤓ Excel</button>
           </div>
-          <button className="btn" style={{ marginTop: 8 }} onClick={shareExcel}>
-            ↗ Поделиться отчётом
-          </button>
-          {!canShare && (
-            <div className="small" style={{ marginTop: 4 }}>
-              На этом устройстве системное «Поделиться» недоступно — файл просто скачается.
-            </div>
-          )}
           <div className="small" style={{ marginTop: 6 }}>
             В PDF и Excel уходит то, что видно ниже, — с учётом периода и поиска.
+            {' '}<button className="link" onClick={() => window.print()}>🖨 распечатать</button>
           </div>
         </div>
 
