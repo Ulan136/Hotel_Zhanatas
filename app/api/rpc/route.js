@@ -22,7 +22,7 @@ function fail(error, status = 200) { return NextResponse.json({ ok: false, error
 const NEED = {
   // без входа
   hasAdmin: 'public', login: 'public', logout: 'public', me: 'public', register: 'public',
-  publicGuests: 'public', publicStays: 'public', freeRooms: 'public',
+  publicGuests: 'public', publicStays: 'public', publicBookings: 'public', freeRooms: 'public',
   addGuest: 'public', updateGuest: 'public', checkin: 'public', checkout: 'public',
   guards: 'public', guardStatus: 'public', guardIn: 'public', guardOut: 'public', addShift: 'public',
 
@@ -187,6 +187,15 @@ const handlers = {
                              FROM guests ORDER BY fio`;
     return ok(rows);
   },
+  /* Кого ждут по заявкам заказчика. Открыто без пароля — этот список
+     видит гость на своём телефоне, поэтому только имя, компания и объект. */
+  async publicBookings() {
+    const rows = await sql`SELECT id, fio, company, destination, bdate::text AS date
+                             FROM bookings
+                            WHERE status = 'new' AND COALESCE(fio, '') <> ''
+                            ORDER BY bdate, id`;
+    return ok(rows);
+  },
   async publicStays() {
     const rows = await sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival,
                                   arrived_at AS "arrivedAt", status
@@ -291,7 +300,7 @@ const handlers = {
     return ok(rows.map((r) => r.room));
   },
   // Дата выбытия при заселении НЕ указывается — она проставляется при выселении (checkout).
-  async checkin({ guestId, fio, room, arrival, arrivedAt, source }) {
+  async checkin({ guestId, fio, room, arrival, arrivedAt, source, bookingId }) {
     if (!arrival) return fail('Укажите дату прибытия');
     const rn = Number(room);
     const busy = await sql`SELECT 1 FROM stays WHERE room = ${rn} AND status <> 'closed' LIMIT 1`;
@@ -303,6 +312,10 @@ const handlers = {
     } catch (e) {
       if (e.code === '23505') return fail('Комнату только что заняли — выберите другую.');
       throw e;
+    }
+    // Пришёл по заявке — снимаем её из ожидания, чтобы ресепшн не ждал дважды.
+    if (bookingId) {
+      await sql`UPDATE bookings SET status = 'done' WHERE id = ${Number(bookingId)} AND status = 'new'`;
     }
     return ok({ ok: true });
   },
