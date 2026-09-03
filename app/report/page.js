@@ -22,6 +22,187 @@ function statusText(s) {
   return s === 'closed' ? 'выехал' : s === 'booked' ? 'бронь' : 'проживает';
 }
 
+/* ================= Аналитика за период =================
+   Заказчику важно видеть не только «кто сейчас живёт», но и как шла
+   загрузка за выбранные дни: сколько человек было в гостинице каждый
+   день, когда был пик, сколько заездов и выездов. */
+const DAYMS = 86400000;
+const dstr = (d) => {
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+};
+const dshort = (s) => { const [, m, d] = String(s).split('-'); return d && m ? `${d}.${m}` : ''; };
+
+/* По каждому дню периода: сколько человек проживало, сколько заехало и выехало.
+   Длинный период сворачиваем в недели, иначе столбики становятся нечитаемыми. */
+function buildSeries(rows, from, to) {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return { pts: [], weekly: false };
+  const n = Math.min(Math.round((b - a) / DAYMS) + 1, 370);
+  const raw = [];
+  for (let i = 0; i < n; i++) {
+    const key = dstr(new Date(a + i * DAYMS));
+    let live = 0, inn = 0, out = 0;
+    for (const s of rows) {
+      const arr = String(s.arrival || '').slice(0, 10);
+      if (!arr) continue;
+      const dep = String(s.departure || '').slice(0, 10);
+      if (arr === key) inn++;
+      if (dep === key) out++;
+      if (arr <= key && (!dep || dep >= key)) live++;
+    }
+    raw.push({ key, key2: key, live, inn, out });
+  }
+  if (raw.length <= 62) return { pts: raw, weekly: false };
+  const pts = [];
+  for (let i = 0; i < raw.length; i += 7) {
+    const c = raw.slice(i, i + 7);
+    pts.push({
+      key: c[0].key, key2: c[c.length - 1].key,
+      live: Math.round(c.reduce((s, x) => s + x.live, 0) / c.length),
+      inn: c.reduce((s, x) => s + x.inn, 0),
+      out: c.reduce((s, x) => s + x.out, 0),
+    });
+  }
+  return { pts, weekly: true };
+}
+
+function Analytics({ rows, from, to, roomsTotal }) {
+  const [pick, setPick] = useState(null);
+  const { pts, weekly } = buildSeries(rows, from, to);
+  if (!pts.length) return null;
+
+  const peak = pts.reduce((m, p) => (p.live > m.live ? p : m), pts[0]);
+  const max = Math.max(peak.live, 1);
+  const avg = pts.reduce((s, p) => s + p.live, 0) / pts.length;
+  const totalIn = pts.reduce((s, p) => s + p.inn, 0);
+  const totalOut = pts.reduce((s, p) => s + p.out, 0);
+  const cur = pick != null ? pts[pick] : null;
+  const H = 132; // высота поля столбиков
+
+  return (
+    <div className="card">
+      <div style={{ fontWeight: 700 }}>Загрузка за период</div>
+      <div className="small" style={{ marginTop: 2 }}>
+        {weekly ? 'Столбик — неделя, высота — среднее число людей в гостинице.'
+          : 'Столбик — день, высота — сколько человек было в гостинице.'}
+      </div>
+
+      <div className="kpi3" style={{ marginTop: 10 }}>
+        <div className="tile" style={{ background: 'var(--eef)' }}>
+          <div className="v" style={{ fontSize: 20, color: 'var(--primd)' }}>{totalIn}</div>
+          <div className="l" style={{ color: 'var(--primd)' }}>заездов</div>
+        </div>
+        <div className="tile" style={{ background: 'var(--panel)' }}>
+          <div className="v" style={{ fontSize: 20 }}>{totalOut}</div>
+          <div className="l" style={{ color: 'var(--muted)' }}>выездов</div>
+        </div>
+        <div className="tile" style={{ background: 'var(--panel)' }}>
+          <div className="v" style={{ fontSize: 20 }}>{peak.live}</div>
+          <div className="l" style={{ color: 'var(--muted)' }}>пик · {dshort(peak.key)}</div>
+        </div>
+      </div>
+
+      {/* Строка подробностей: пока не трогают график — общий итог */}
+      <div className="small" style={{ margin: '12px 0 6px', minHeight: 18, color: 'var(--ink)' }}>
+        {cur
+          ? <><b>{weekly ? `${dshort(cur.key)}–${dshort(cur.key2)}` : dshort(cur.key)}</b>
+              {' · '}{cur.live} чел. в гостинице · заехали {cur.inn} · выехали {cur.out}</>
+          : <>В среднем <b>{avg.toFixed(1).replace('.0', '')}</b> чел. в день из {roomsTotal} комнат</>}
+      </div>
+
+      {/* Столбики. Тонкая линия — среднее по периоду. */}
+      {pts.length >= 3 && (<>
+      <div
+        style={{ position: 'relative', height: H, display: 'flex', alignItems: 'flex-end', gap: 2 }}
+        onMouseLeave={() => setPick(null)}
+      >
+        <div style={{
+          position: 'absolute', left: 0, right: 0, bottom: (avg / max) * (H - 18),
+          borderTop: '1px solid var(--line)', pointerEvents: 'none', zIndex: 0,
+        }} />
+        {pts.map((p, i) => (
+          <div
+            key={p.key}
+            onMouseEnter={() => setPick(i)}
+            onClick={() => setPick(pick === i ? null : i)}
+            style={{
+              flex: 1, minWidth: 0, height: '100%', display: 'flex',
+              alignItems: 'flex-end', justifyContent: 'center', cursor: 'pointer',
+              position: 'relative', zIndex: 1,
+            }}
+          >
+            <div
+              title={`${dshort(p.key)} — ${p.live}`}
+              style={{
+                width: '100%', maxWidth: 24,
+                height: Math.max((p.live / max) * (H - 18), p.live ? 3 : 1),
+                borderRadius: '4px 4px 0 0',
+                background: p.live ? 'var(--primary)' : 'var(--line)',
+                opacity: pick == null || pick === i ? 1 : 0.45,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="small" style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+        <span>{dshort(pts[0].key)}</span>
+        <span>среднее {avg.toFixed(1).replace('.0', '')}</span>
+        <span>{dshort(pts[pts.length - 1].key2)}</span>
+      </div>
+      </>)}
+    </div>
+  );
+}
+
+/* Разрез: по компаниям и по объектам — куда людей направили.
+   Показываем только то, что реально заполнено. */
+function Breakdown({ list }) {
+  const groups = (field) => {
+    const m = new Map();
+    for (const s of list) {
+      const v = String(s[field] || '').trim();
+      if (!v) continue;
+      m.set(v, (m.get(v) || 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  };
+  const parts = [
+    { title: 'По компаниям', items: groups('company') },
+    { title: 'По объектам', items: groups('destination') },
+  ].filter((p) => p.items.length);
+  if (!parts.length) return null;
+
+  return (
+    <div className="card">
+      <div style={{ fontWeight: 700, marginBottom: 2 }}>Разрез по периоду</div>
+      <div className="small">Считаем заезды за выбранные даты.</div>
+      {parts.map((p) => {
+        const top = p.items.slice(0, 5);
+        const rest = p.items.slice(5).reduce((s, x) => s + x[1], 0);
+        if (rest) top.push(['Другие', rest]);
+        const max = Math.max(...top.map((x) => x[1]), 1);
+        return (
+          <div key={p.title} style={{ marginTop: 12 }}>
+            <div className="small" style={{ fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>{p.title}</div>
+            {top.map(([name, n]) => (
+              <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '5px 0' }}>
+                <div style={{ flex: '0 0 38%', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ height: 10, width: `${(n / max) * 100}%`, minWidth: 4, borderRadius: '0 4px 4px 0', background: 'var(--primary)' }} />
+                </div>
+                <div style={{ flex: '0 0 26px', textAlign: 'right', fontSize: 12.5, fontWeight: 700 }}>{n}</div>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ReportPage() {
   const [authed, setAuthed] = useState(false);
   const [login, setLogin] = useState('');
@@ -137,6 +318,12 @@ export default function ReportPage() {
   const period = from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
 
   function setToday() { setFrom(todayStr()); setTo(todayStr()); }
+  // «Всё время» — от самой ранней записи в базе до сегодня.
+  const firstDay = rows.reduce((m, s2) => {
+    const a = String(s2.arrival || '').slice(0, 10);
+    return a && (!m || a < m) ? a : m;
+  }, '');
+  function setAll() { setFrom(firstDay || todayStr()); setTo(todayStr()); }
   function setDays(n) {
     const d = new Date(); d.setDate(d.getDate() - (n - 1));
     const p = (x) => String(x).padStart(2, '0');
@@ -241,6 +428,7 @@ export default function ReportPage() {
             <button className={'chipbtn' + (from === todayStr() && to === todayStr() ? ' on' : '')} onClick={setToday}>Сегодня</button>
             <button className="chipbtn" onClick={() => setDays(7)}>7 дней</button>
             <button className="chipbtn" onClick={() => setDays(30)}>30 дней</button>
+            <button className={'chipbtn' + (firstDay && from === firstDay && to === todayStr() ? ' on' : '')} onClick={setAll}>Всё время</button>
           </div>
 
           <div className="two">
@@ -284,6 +472,10 @@ export default function ReportPage() {
             Всего комнат в гостинице: {rooms.length} · ожидается по заявкам: <b>{booked}</b> чел.
           </div>
         </div>
+
+        {/* --- Аналитика: загрузка и разрезы за период --- */}
+        <Analytics rows={rows} from={from} to={to} roomsTotal={rooms.length} />
+        <Breakdown list={list} />
 
         {/* --- Заявки на проживание от заказчика --- */}
         <Requests list={bookings} onAdd={() => setReq(true)} />
