@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { sql } from '@/lib/db';
+import { AUTH_COOKIE, signToken, verifyToken, atLeast } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,14 +13,50 @@ export const dynamic = 'force-dynamic';
 function ok(data) { return NextResponse.json(data ?? { ok: true }); }
 function fail(error, status = 200) { return NextResponse.json({ ok: false, error }, { status }); }
 
+/* Кому что можно. Всё, чего нет в списке, требует прав администратора —
+   так новое действие по умолчанию закрыто, а не открыто всему интернету.
+     public    — без входа: QR-страницы гостя и охраны, вход/выход
+     factory   — заказчик и выше
+     reception — ресепшн и админ
+     admin     — только администратор */
+const NEED = {
+  // без входа
+  hasAdmin: 'public', login: 'public', logout: 'public', me: 'public', register: 'public',
+  publicGuests: 'public', publicStays: 'public', freeRooms: 'public',
+  addGuest: 'public', updateGuest: 'public', checkin: 'public', checkout: 'public',
+  guards: 'public', guardStatus: 'public', guardIn: 'public', guardOut: 'public', addShift: 'public',
+
+  // заказчик
+  report: 'factory', settings: 'factory', pulse: 'factory',
+  bookings: 'factory', addBooking: 'factory',
+
+  // ресепшн
+  bootstrap: 'reception', guests: 'reception', stays: 'reception', deleteGuest: 'reception',
+  staff: 'reception', addStaff: 'reception', updateStaff: 'reception', deleteStaff: 'reception',
+  categories: 'reception', addCategory: 'reception', updateCategory: 'reception', deleteCategory: 'reception',
+  addFinance: 'reception', payments: 'reception', addPayment: 'reception', deletePayment: 'reception',
+  shifts: 'reception', setShiftType: 'reception', deleteShift: 'reception',
+  moveStay: 'reception', updateStay: 'reception',
+  updateBooking: 'reception', deleteBooking: 'reception',
+
+  // администратор
+  users: 'admin', addUser: 'admin', updateUser: 'admin', deleteUser: 'admin', setSetting: 'admin',
+};
+
 export async function POST(req) {
   let body;
   try { body = await req.json(); } catch { return fail('Некорректный запрос'); }
   const { action } = body || {};
+  // Кто спрашивает — берём из подписанной куки, а не из слов клиента.
+  const me = verifyToken(req.cookies.get(AUTH_COOKIE)?.value);
   try {
     const h = handlers[action];
     if (!h) return fail('Неизвестное действие: ' + action, 400);
-    return await h(body);
+    const need = NEED[action] || 'admin';
+    if (!atLeast(me, need)) {
+      return fail(me ? 'Недостаточно прав для этого действия' : 'Нужно войти', me ? 403 : 401);
+    }
+    return await h(body, me);
   } catch (e) {
     // Нарушение уникального индекса «одна активная бронь на комнату» и т.п.
     if (e && e.code === '23505') {
@@ -36,10 +73,17 @@ const handlers = {
     const r = await sql`SELECT count(*)::int AS n FROM users WHERE role = 'admin'`;
     return ok({ hasAdmin: r[0].n > 0 });
   },
-  async register({ name, login, pass, role }) {
+  async register({ name, login, pass, role }, me) {
     if (!name || !login || !pass) return fail('Заполните все поля');
     const allowed = ['admin', 'reception', 'factory'];
     const r = allowed.includes(role) ? role : 'reception';
+    /* Пока в базе нет ни одного администратора — это первичная настройка,
+       её может пройти кто угодно. Как только админ есть, добавлять людей
+       может только он: иначе любой посторонний создал бы себе доступ. */
+    if (!me || me.role !== 'admin') {
+      const a = await sql`SELECT count(*)::int AS n FROM users WHERE role = 'admin'`;
+      if (a[0].n > 0) return fail('Добавлять пользователей может только администратор', 403);
+    }
     const hash = bcrypt.hashSync(String(pass), 10);
     try {
       await sql`INSERT INTO users (name, login, pass_hash, role) VALUES (${name}, ${login}, ${hash}, ${r})`;
@@ -49,12 +93,25 @@ const handlers = {
     }
     return ok({ ok: true });
   },
-  async login({ login, pass }) {
+  async login({ login, pass, remember = true }) {
     const rows = await sql`SELECT name, login, pass_hash, role FROM users WHERE login = ${login}`;
     const u = rows[0];
     if (!u || !bcrypt.compareSync(String(pass || ''), u.pass_hash)) return fail('Неверный логин или пароль');
-    return ok({ ok: true, user: { name: u.name, login: u.login, role: u.role } });
+    const res = ok({ ok: true, user: { name: u.name, login: u.login, role: u.role } });
+    /* httpOnly — куку не прочитает скрипт на странице; secure — только по HTTPS;
+       sameSite lax — её не пришлёт чужой сайт от вашего имени. */
+    res.cookies.set(AUTH_COOKIE, signToken({ login: u.login, role: u.role, name: u.name }), {
+      httpOnly: true, secure: true, sameSite: 'lax', path: '/',
+      ...(remember ? { maxAge: 30 * 24 * 3600 } : {}),
+    });
+    return res;
   },
+  async logout() {
+    const res = ok({ ok: true });
+    res.cookies.set(AUTH_COOKIE, '', { httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 0 });
+    return res;
+  },
+  async me(_body, me) { return ok({ ok: true, user: me || null }); },
 
   /* ---------- Пользователи ---------- */
   async users() {
@@ -121,6 +178,21 @@ const handlers = {
     const rows = await sql`SELECT id, fio, iin, doc_no AS "docNo", birth_year AS "birthYear", company, position, destination, citizenship, phone FROM guests ORDER BY fio`;
     return ok(rows);
   },
+  /* Страница гостя открывается по QR без пароля, поэтому ей отдаём
+     только то, без чего она не работает: имя, компанию, гражданство и
+     признак «ИИН уже заполнен». Ни ИИН, ни паспорта, ни телефонов. */
+  async publicGuests() {
+    const rows = await sql`SELECT id, fio, company, position, destination, citizenship,
+                                  (COALESCE(iin, '') <> '') AS "hasIin"
+                             FROM guests ORDER BY fio`;
+    return ok(rows);
+  },
+  async publicStays() {
+    const rows = await sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival,
+                                  arrived_at AS "arrivedAt", status
+                             FROM stays WHERE status <> 'closed' ORDER BY room`;
+    return ok(rows);
+  },
   async addGuest({ fio, iin, docNo, birthYear, company, position, destination, citizenship, phone }) {
     if (!fio) return fail('Укажите ФИО');
     if (!iin) return fail('Укажите ИИН');
@@ -131,13 +203,21 @@ const handlers = {
       RETURNING id`;
     return ok({ ok: true, id: rows[0].id });
   },
+  /* Пустое поле означает «не меняем»: страница гостя больше не получает
+     ИИН и телефон, и без этого правила они бы затирались при дозаполнении. */
   async updateGuest({ id, fio, iin, docNo, birthYear, company, position, destination, citizenship, phone }) {
     if (!fio) return fail('Укажите ФИО');
-    if (!iin) return fail('Укажите ИИН');
+    const keep = (v) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v));
     await sql`UPDATE guests SET
-        fio = ${fio}, iin = ${iin || ''}, doc_no = ${docNo || ''}, birth_year = ${String(birthYear || '')},
-        company = ${company || ''}, position = ${position || ''}, destination = ${destination || ''},
-        citizenship = ${citizenship || ''}, phone = ${phone || ''}
+        fio         = ${fio},
+        iin         = COALESCE(${keep(iin)}, iin),
+        doc_no      = COALESCE(${keep(docNo)}, doc_no),
+        birth_year  = COALESCE(${keep(birthYear)}, birth_year),
+        company     = COALESCE(${keep(company)}, company),
+        position    = COALESCE(${keep(position)}, position),
+        destination = COALESCE(${keep(destination)}, destination),
+        citizenship = COALESCE(${keep(citizenship)}, citizenship),
+        phone       = COALESCE(${keep(phone)}, phone)
       WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
