@@ -204,8 +204,8 @@ export default function GuestPage() {
 
   /* ---------------- Прибытие ---------------- */
   async function startArrival() {
-    await load('guests', setGuests);
-    await load('stays', setStays);
+    await load('publicGuests', setGuests);
+    await load('publicStays', setStays);
     setScreen('in-choice');
   }
 
@@ -217,7 +217,7 @@ export default function GuestPage() {
     }
     setGuest(g);
     // Нет ИИН или гражданства — сначала просим дозаполнить анкету.
-    if (!g.iin || !g.citizenship) { setFormInit(g); setScreen('in-form'); return; }
+    if (!g.hasIin || !g.citizenship) { setFormInit(g); setScreen('in-form'); return; }
     goRooms();
   }
 
@@ -243,7 +243,7 @@ export default function GuestPage() {
 
   /* ---------------- Выбытие ---------------- */
   async function startDeparture() {
-    const r = await load('stays', setStays);
+    const r = await load('publicStays', setStays);
     setLiving(r.filter((s) => s.status !== 'closed'));
     setScreen('out-search');
   }
