@@ -54,6 +54,7 @@ export default function AdminPage() {
     catch { alert('Нет связи с базой.'); }
   }
   function logout(forget) {
+    api('logout').catch(() => {});
     if (forget) forgetMe(); else clearSess();
     setSess(null); setView('login'); setScreen('tabs');
   }
@@ -237,7 +238,7 @@ function LoginForm({ onDone, setBusy }) {
     if (!login.trim() || !pass) return alert('Введите логин и пароль');
     setBusy(true);
     try {
-      const r = await api('login', { login: login.trim(), pass });
+      const r = await api('login', { login: login.trim(), pass, remember });
       if (!r.ok || r.user.role === 'factory') return alert('Неверный логин или пароль');
       onDone({ name: r.user.name, login: r.user.login, role: r.user.role }, remember);
     } catch (e) { alert(e.message); } finally { setBusy(false); }
