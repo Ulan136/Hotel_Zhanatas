@@ -11,6 +11,9 @@ import { downloadPdf } from '@/lib/pdf';
 
 const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
 
+// Реквизиты гостиницы — в шапке отчёта и в первой строке PDF/Excel.
+const HOTEL = 'Гостиница «Медина» · г. Жанатас · Абдраимов';
+
 const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 function weekday(d) {
   const p = String(d || '').slice(0, 10).split('-').map(Number);
@@ -238,6 +241,9 @@ export default function ReportPage() {
   const [to, setTo] = useState(todayStr());
   const [q, setQ] = useState('');
   const [who, setWho] = useState('all'); // all | living | left
+  /* Даты включаются только когда их трогают. По умолчанию журнал
+     начинается с самого раннего, кто СЕЙЧАС живёт в гостинице. */
+  const [useDates, setUseDates] = useState(false);
   const [booked, setBooked] = useState(0);
   const [bookings, setBookings] = useState([]);
   const [req, setReq] = useState(false);       // открыта форма заявки
@@ -283,12 +289,20 @@ export default function ReportPage() {
   const freeRooms = rooms.filter((n) => !busyRooms.has(n));
 
   /* ---------- период = журнал регистраций ----------
-     Список идёт по дате заезда, от ранней к поздней: меняешь даты — меняется
-     список, как в бумажном журнале регистраций. */
+     По умолчанию (даты не трогали) журнал начинается с самой ранней даты
+     заезда среди тех, кто сейчас в гостинице: тот, кто заехал раньше всех
+     и ещё не выехал, возглавляет список, а дальше идут все за ним.
+     Как только заказчик ставит свои даты — работает выбранный период. */
   const day = (v) => String(v || '').slice(0, 10);
+  const liveFrom = active.reduce((m, s2) => {
+    const a = day(s2.arrival);
+    return a && (!m || a < m) ? a : m;
+  }, '');
+  const effFrom = useDates ? from : (liveFrom || todayStr());
+  const effTo = useDates ? to : todayStr();
   let list = rows.filter((s) => {
     const a = day(s.arrival);
-    return (!from || a >= from) && (!to || a <= to);
+    return (!effFrom || a >= effFrom) && (!effTo || a <= effTo);
   });
 
   const nLiving = list.filter((s) => s.status !== 'closed').length;
@@ -336,16 +350,17 @@ export default function ReportPage() {
   // Сколько человек живёт в гостинице сейчас — не зависит от выбранного периода.
   const livingNow = active.length;
 
-  const period = from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
+  const period = effFrom === effTo ? fmt(effFrom) : `${fmt(effFrom)} – ${fmt(effTo)}`;
 
-  function setToday() { setFrom(todayStr()); setTo(todayStr()); }
+  function setToday() { setUseDates(true); setFrom(todayStr()); setTo(todayStr()); }
   // «Всё время» — от самой ранней записи в базе до сегодня.
   const firstDay = rows.reduce((m, s2) => {
     const a = String(s2.arrival || '').slice(0, 10);
     return a && (!m || a < m) ? a : m;
   }, '');
-  function setAll() { setFrom(firstDay || todayStr()); setTo(todayStr()); }
+  function setAll() { setUseDates(true); setFrom(firstDay || todayStr()); setTo(todayStr()); }
   function setDays(n) {
+    setUseDates(true);
     const d = new Date(); d.setDate(d.getDate() - (n - 1));
     const p = (x) => String(x).padStart(2, '0');
     setFrom(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`);
@@ -367,12 +382,12 @@ export default function ReportPage() {
       i === 0 ? freeRooms.length : '',
       i === 0 ? booked : '',
     ]);
-    return { rows: [['MEDINA'], head, ...body], head };
+    return { rows: [[HOTEL], head, ...body], head };
   }
 
   function exportExcel() {
     const { rows } = buildReportRows();
-    downloadXlsx(`MEDINA_${from}_${to}.xlsx`, rows, { sheetName: 'Отчёт', boldRows: [0, 1] });
+    downloadXlsx(`MEDINA_${effFrom}_${effTo}.xlsx`, rows, { sheetName: 'Отчёт', boldRows: [0, 1] });
   }
 
   /* PDF собираем сами — получается обычный файл, который можно
@@ -390,12 +405,12 @@ export default function ReportPage() {
     ]);
     // Колонкам с длинными заголовками даём больше места.
     const widths = [120, 120, 175, 150, 120, 120, 120];
-    downloadPdf(`MEDINA_${from}_${to}.pdf`, {
-      title: `MEDINA · ${period}`,
+    downloadPdf(`MEDINA_${effFrom}_${effTo}.pdf`, {
+      title: `${HOTEL} · ${period}`,
       subtitle: `Отчёт о проживании · записей: ${body.length} · свободно комнат: ${freeRooms.length} · занято: ${busyRooms.size}`,
       columns: head.map((t, i) => ({ title: t, width: widths[i], align: i >= 4 ? 'right' : 'left' })),
       rows: body,
-      footer: `MEDINA · сформировано ${fmtDateTime(new Date().toISOString())}`,
+      footer: `${HOTEL} · сформировано ${fmtDateTime(new Date().toISOString())}`,
     });
   }
 
@@ -436,7 +451,7 @@ export default function ReportPage() {
 
   return (
     <div className="wrap">
-      <TopBar icon="📊" sub="заказчик · только просмотр"
+      <TopBar icon="📊" sub="Медина · г. Жанатас · заказчик"
         right={<button className="link" style={{ color: '#fff' }} onClick={doLogout}>выйти</button>} />
       <div className="content">
 
@@ -446,19 +461,25 @@ export default function ReportPage() {
           <div className="small">🟢 {liveLabel(checkedAt)}. Только просмотр.</div>
 
           <div className="chips-row">
-            <button className={'chipbtn' + (from === todayStr() && to === todayStr() ? ' on' : '')} onClick={setToday}>Сегодня</button>
+            <button className={'chipbtn' + (useDates ? '' : ' on')} onClick={() => setUseDates(false)}>Сейчас в гостинице</button>
+            <button className={'chipbtn' + (useDates && from === todayStr() && to === todayStr() ? ' on' : '')} onClick={setToday}>Сегодня</button>
             <button className="chipbtn" onClick={() => setDays(7)}>7 дней</button>
             <button className="chipbtn" onClick={() => setDays(30)}>30 дней</button>
-            <button className={'chipbtn' + (firstDay && from === firstDay && to === todayStr() ? ' on' : '')} onClick={setAll}>Всё время</button>
+            <button className={'chipbtn' + (useDates && firstDay && from === firstDay && to === todayStr() ? ' on' : '')} onClick={setAll}>Всё время</button>
           </div>
 
           <div className="two">
-            <div><label>Период с</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-            <div><label>по</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+            <div><label>Период с</label>
+              <input type="date" value={from} onChange={(e) => { setUseDates(true); setFrom(e.target.value); }} /></div>
+            <div><label>по</label>
+              <input type="date" value={to} onChange={(e) => { setUseDates(true); setTo(e.target.value); }} /></div>
           </div>
 
           <div className="small" style={{ marginTop: 6 }}>
-            Список идёт по датам заезда, от ранних к поздним — как журнал регистраций.
+            {useDates
+              ? <>Показываем заезды с {fmt(effFrom)} по {fmt(effTo)} — по датам, от ранних к поздним.</>
+              : <>Сейчас показываем всех с {fmt(effFrom)} — с самого раннего, кто ещё живёт в гостинице.
+                  Поставьте свои даты, чтобы посмотреть период.</>}
           </div>
 
           <div className="two" style={{ marginTop: 10 }}>
@@ -473,7 +494,8 @@ export default function ReportPage() {
 
         {/* --- Сводка --- */}
         <div className="card">
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>MEDINA · {period}</div>
+          <div style={{ fontWeight: 700 }}>Гостиница «Медина»</div>
+          <div className="small" style={{ marginBottom: 8 }}>г. Жанатас · Абдраимов · {period}</div>
           {/* Занятость фонда — цифры показываем всегда, даже когда номера комнат скрыты */}
           <div className="kpi3">
             <div className="tile" style={{ background: 'var(--freebg)' }}>
@@ -495,7 +517,7 @@ export default function ReportPage() {
         </div>
 
         {/* --- Аналитика: загрузка и разрезы за период --- */}
-        <Analytics rows={rows} from={from} to={to} roomsTotal={rooms.length} />
+        <Analytics rows={rows} from={effFrom} to={effTo} roomsTotal={rooms.length} />
         <Breakdown list={list} />
 
         {/* --- Заявки на проживание от заказчика --- */}
