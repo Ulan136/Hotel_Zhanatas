@@ -315,7 +315,7 @@ const handlers = {
     }
     // Пришёл по заявке — снимаем её из ожидания, чтобы ресепшн не ждал дважды.
     if (bookingId) {
-      await sql`UPDATE bookings SET status = 'done' WHERE id = ${Number(bookingId)} AND status = 'new'`;
+      await sql`UPDATE bookings SET status = 'closed' WHERE id = ${Number(bookingId)} AND status = 'new'`;
     }
     return ok({ ok: true });
   },
