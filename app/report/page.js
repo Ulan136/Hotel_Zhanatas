@@ -158,7 +158,8 @@ function Analytics({ rows, from, to, roomsTotal }) {
 }
 
 /* Разрез: по компаниям и по объектам — куда людей направили.
-   Показываем только то, что реально заполнено. */
+   Форма подстраивается под данные: одна компания — просто строка,
+   всё по одному — список, а если есть перевес — полоски. */
 function Breakdown({ list }) {
   const groups = (field) => {
     const m = new Map();
@@ -167,35 +168,55 @@ function Breakdown({ list }) {
       if (!v) continue;
       m.set(v, (m.get(v) || 0) + 1);
     }
-    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   };
   const parts = [
-    { title: 'По компаниям', items: groups('company') },
-    { title: 'По объектам', items: groups('destination') },
+    { title: 'Компании', items: groups('company') },
+    { title: 'Объекты', items: groups('destination') },
   ].filter((p) => p.items.length);
   if (!parts.length) return null;
 
   return (
     <div className="card">
-      <div style={{ fontWeight: 700, marginBottom: 2 }}>Разрез по периоду</div>
+      <div style={{ fontWeight: 700, marginBottom: 2 }}>Кого и куда направили</div>
       <div className="small">Считаем заезды за выбранные даты.</div>
       {parts.map((p) => {
-        const top = p.items.slice(0, 5);
-        const rest = p.items.slice(5).reduce((s, x) => s + x[1], 0);
-        if (rest) top.push(['Другие', rest]);
-        const max = Math.max(...top.map((x) => x[1]), 1);
+        const total = p.items.reduce((a, x) => a + x[1], 0);
+        const max = p.items[0][1];
         return (
           <div key={p.title} style={{ marginTop: 12 }}>
-            <div className="small" style={{ fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>{p.title}</div>
-            {top.map(([name, n]) => (
-              <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '5px 0' }}>
-                <div style={{ flex: '0 0 38%', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ height: 10, width: `${(n / max) * 100}%`, minWidth: 4, borderRadius: '0 4px 4px 0', background: 'var(--primary)' }} />
-                </div>
-                <div style={{ flex: '0 0 26px', textAlign: 'right', fontSize: 12.5, fontWeight: 700 }}>{n}</div>
+            <div className="small" style={{ fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>
+              {p.title} · {p.items.length}
+            </div>
+
+            {p.items.length === 1 ? (
+              /* Одна группа — полоска ничего не сравнивает, пишем словами. */
+              <div style={{ fontSize: 13.5 }}>Все {total} — <b>{p.items[0][0]}</b></div>
+            ) : max === 1 ? (
+              /* Все по одному — сравнивать нечего, показываем список. */
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {p.items.map(([name]) => (
+                  <span key={name} className="rchip" style={{ background: 'var(--panel)', fontWeight: 600 }}>{name}</span>
+                ))}
               </div>
-            ))}
+            ) : (
+              <>
+                {p.items.slice(0, 8).map(([name, n]) => (
+                  <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '5px 0' }}>
+                    <div style={{ flex: '0 0 38%', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ height: 10, width: `${(n / max) * 100}%`, minWidth: 4, borderRadius: '0 4px 4px 0', background: 'var(--primary)' }} />
+                    </div>
+                    <div style={{ flex: '0 0 26px', textAlign: 'right', fontSize: 12.5, fontWeight: 700 }}>{n}</div>
+                  </div>
+                ))}
+                {p.items.length > 8 && (
+                  <div className="small" style={{ marginTop: 4 }}>
+                    и ещё {p.items.length - 8} — по одному-два человека
+                  </div>
+                )}
+              </>
+            )}
           </div>
         );
       })}
