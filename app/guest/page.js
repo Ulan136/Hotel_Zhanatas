@@ -22,6 +22,9 @@ import { fuzzySearch } from '@/lib/fuzzy';
    out-date   — дата выбытия и подтверждение
    out-done   — чек о выезде                                     */
 
+// Сравнение имён «по-человечески»: без регистра и лишних пробелов.
+const norm = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
 function Steps({ n, of }) {
   return <div className="step-dots">{Array.from({ length: of }, (_, i) => <i key={i} className={i < n ? 'on' : ''} />)}</div>;
 }
@@ -168,6 +171,8 @@ export default function GuestPage() {
   const [busy, setBusy] = useState(false);
   const [guests, setGuests] = useState([]);
   const [stays, setStays] = useState([]);
+  const [waiting, setWaiting] = useState([]);   // кого ждут по заявкам заказчика
+  const [bookingId, setBookingId] = useState(null);
   const [living, setLiving] = useState([]);
 
   const [guest, setGuest] = useState(null);
@@ -186,7 +191,7 @@ export default function GuestPage() {
   useEffect(() => { setArrival(todayStr()); setDeparture(todayStr()); setArrTime(nowTime()); setDepTime(nowTime()); }, []);
 
   function reset() {
-    setScreen('start'); setGuest(null); setFormInit(null); setRoom(null);
+    setScreen('start'); setGuest(null); setFormInit(null); setRoom(null); setBookingId(null);
     setStay(null); setReceipt(null);
     setArrival(todayStr()); setDeparture(todayStr()); setArrTime(nowTime()); setDepTime(nowTime());
   }
@@ -206,6 +211,7 @@ export default function GuestPage() {
   async function startArrival() {
     await load('publicGuests', setGuests);
     await load('publicStays', setStays);
+    await load('publicBookings', setWaiting);
     setScreen('in-choice');
   }
 
@@ -221,6 +227,30 @@ export default function GuestPage() {
     goRooms();
   }
 
+  /* Гость нашёл себя в списке ожидания. Если он уже есть в базе — берём его
+     запись (не плодим дубли), иначе открываем анкету с подставленными
+     именем, компанией и объектом из заявки. */
+  function pickWaiting(b) {
+    setBookingId(b.id);
+    const same = guests.find((g) => norm(g.fio) === norm(b.fio));
+    if (same) {
+      const active = stays.find((s) => String(s.guestId) === String(same.id) && s.status !== 'closed');
+      if (active) {
+        return alert(`${same.fio}, вы уже заселены — блок ${blockOf(active.room)}, комната №${active.room}.`);
+      }
+      setGuest(same);
+      if (!same.hasIin || !same.citizenship) {
+        setFormInit({ ...same, company: same.company || b.company, destination: same.destination || b.destination });
+        setScreen('in-form');
+        return;
+      }
+      goRooms();
+      return;
+    }
+    setFormInit({ fio: b.fio, company: b.company || undefined, destination: b.destination || '' });
+    setScreen('in-form');
+  }
+
   function afterForm(g) { setGuest(g); setFormInit(null); goRooms(); }
 
   async function goRooms() {
@@ -234,7 +264,7 @@ export default function GuestPage() {
     setBusy(true);
     try {
       const arrivedAt = toAstanaISO(arrival, arrTime);
-      const r = await api('checkin', { guestId: guest?.id, fio: guest?.fio, room, arrival, arrivedAt, source: 'qr' });
+      const r = await api('checkin', { guestId: guest?.id, fio: guest?.fio, room, arrival, arrivedAt, source: 'qr', bookingId });
       if (!r.ok) return alert(r.error || 'Комнату уже заняли — вернитесь и выберите другую.');
       setReceipt({ fio: guest?.fio, room, arrival, arrivedAt });
       setScreen('in-done');
@@ -294,7 +324,28 @@ export default function GuestPage() {
           <div className="card">
             <Steps n={1} of={3} />
             <h2>Прибытие</h2>
-            <div className="small">Вы уже есть в базе или заселяетесь впервые?</div>
+
+            {waiting.length > 0 && (
+              <>
+                <div className="small" style={{ marginBottom: 6 }}>
+                  Вас ждут по заявке — найдите себя в списке, остальное заполним вместе.
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  {waiting.map((b) => (
+                    <div key={b.id} className="list-item" style={{ cursor: 'pointer' }} onClick={() => pickWaiting(b)}>
+                      <div className="avatar">{initials(b.fio)}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600 }}>{b.fio}</div>
+                        <div className="small">{[b.destination, b.company].filter(Boolean).join(' · ')}</div>
+                      </div>
+                      <span className="chip m">›</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div className="small">{waiting.length ? 'Вас нет в списке?' : 'Вы уже есть в базе или заселяетесь впервые?'}</div>
             <div className="pick2">
               <button className="pick in" onClick={() => setScreen('in-search')}>
                 <span className="ic">👤</span><span className="t">Вход</span><span className="d">я уже есть в базе</span>
