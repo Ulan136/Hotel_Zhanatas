@@ -56,7 +56,7 @@ export default function ReportPage() {
     if (!login.trim() || !pass) return alert('Введите логин и пароль');
     setBusy(true);
     try {
-      const r = await api('login', { login: login.trim(), pass: pass.trim() });
+      const r = await api('login', { login: login.trim(), pass: pass.trim(), remember });
       if (!r.ok || r.user.role !== 'factory') return alert('Неверный логин или пароль');
       setSess({ name: r.user.name, login: r.user.login, role: r.user.role }, remember, SK);
       setAuthed(true);
@@ -64,7 +64,10 @@ export default function ReportPage() {
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
 
-  function doLogout() { clearSess(SK); setAuthed(false); setPass(''); setRows([]); setRooms([]); }
+  function doLogout() {
+    api('logout').catch(() => {});
+    clearSess(SK); setAuthed(false); setPass(''); setRows([]); setRooms([]);
+  }
 
   async function render() {
     setBusy(true);
