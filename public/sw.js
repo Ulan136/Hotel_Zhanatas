@@ -1,5 +1,5 @@
 // MEDINA — service worker. БАМПАТЬ CACHE при изменении оболочки/статики (v1→v2…).
-const CACHE = 'medina-v1';
+const CACHE = 'medina-v2';
 const SHELL = [
   '/', '/admin', '/guard', '/guest', '/report',
   '/icons/admin-192.png', '/icons/guard-192.png', '/icons/guest-192.png', '/icons/report-192.png',
