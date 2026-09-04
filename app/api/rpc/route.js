@@ -34,7 +34,8 @@ const NEED = {
   bootstrap: 'reception', guests: 'reception', stays: 'reception', deleteGuest: 'reception',
   staff: 'reception', addStaff: 'reception', updateStaff: 'reception', deleteStaff: 'reception',
   categories: 'reception', addCategory: 'reception', updateCategory: 'reception', deleteCategory: 'reception',
-  addFinance: 'reception', payments: 'reception', addPayment: 'reception', deletePayment: 'reception',
+  addFinance: 'reception', updateFinance: 'reception', deleteFinance: 'reception',
+  payments: 'reception', addPayment: 'reception', updatePayment: 'reception', deletePayment: 'reception',
   shifts: 'reception', setShiftType: 'reception', deleteShift: 'reception',
   moveStay: 'reception', updateStay: 'reception',
   updateBooking: 'reception', deleteBooking: 'reception',
@@ -509,6 +510,24 @@ const handlers = {
                            FROM payments ORDER BY pdate DESC, id DESC`;
     return ok(rows);
   },
+  /* Правка и удаление операции — журнал за прошлые дни можно исправить,
+     не заводя «сторно» второй строкой. */
+  async updateFinance({ id, type, category, subcategory, amount, date, note }) {
+    if (!id) return fail('Нет записи');
+    const t = type === 'income' ? 'income' : 'expense';
+    const a = Math.abs(parseFloat(amount) || 0);
+    if (!a) return fail('Укажите сумму');
+    if (!date) return fail('Укажите дату');
+    await sql`UPDATE finance SET ftype = ${t}, category = ${category || ''},
+                subcategory = ${subcategory || ''}, amount = ${a}, fdate = ${date}, note = ${note || ''}
+              WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
+  async deleteFinance({ id }) {
+    if (!id) return fail('Нет записи');
+    await sql`DELETE FROM finance WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
   async addPayment({ fio, amount, date, note }) {
     if (!fio) return fail('Не указан сотрудник');
     const a = Math.round((parseFloat(amount) || 0) * 100) / 100;
@@ -517,6 +536,15 @@ const handlers = {
                            VALUES (${fio}, ${a}, ${date || null}, ${note || ''})
                            RETURNING id`;
     return ok({ ok: true, id: rows[0].id });
+  },
+  async updatePayment({ id, fio, amount, date, note }) {
+    if (!id) return fail('Нет записи');
+    const a = Math.round((parseFloat(amount) || 0) * 100) / 100;
+    if (!(a > 0)) return fail('Сумма должна быть больше нуля');
+    if (!date) return fail('Укажите дату');
+    await sql`UPDATE payments SET fio = ${fio || ''}, amount = ${a}, pdate = ${date}, note = ${note || ''}
+              WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
   },
   async deletePayment({ id }) {
     await sql`DELETE FROM payments WHERE id = ${Number(id)}`;
