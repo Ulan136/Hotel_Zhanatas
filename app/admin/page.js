@@ -132,6 +132,8 @@ export default function AdminPage() {
                 onPay={(row) => setModal({ type: 'pay', data: row })}
                 onEditPayment={(p) => setModal({ type: 'payEdit', data: p })}
                 onDelPayment={(id) => handleDelete('payment', id)}
+                onEditShift={(x) => setModal({ type: 'shiftEdit', data: x })}
+                onDelShift={(id) => handleDelete('shift', id)}
                 onReload={reload} />}
             </>}
       </div>
@@ -160,6 +162,7 @@ export default function AdminPage() {
         {modal?.type === 'pay' && <PayModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'payEdit' && <PayEditModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'finEdit' && <FinEditModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
+        {modal?.type === 'shiftEdit' && <ShiftEditModal row={modal.data} db={db} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'booking' && <BookingModal onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'guest' && <GuestModal guest={modal.data} onClose={closeModal} onSaved={() => afterSave('guests')} />}
         {modal?.type === 'staff' && <StaffModal worker={modal.data} onClose={closeModal} onSaved={() => afterSave('staff')} />}
@@ -187,6 +190,9 @@ export default function AdminPage() {
     } else if (kind === 'booking') {
       if (!confirm('Удалить заявку на бронь?')) return;
       await withBusy(() => api('deleteBooking', { id: arg })); await reload();
+    } else if (kind === 'shift') {
+      if (!confirm('Удалить эту смену из журнала? Начисление пересчитается.')) return;
+      await withBusy(() => api('deleteShift', { id: arg })); await reload();
     } else if (kind === 'finance') {
       if (!confirm('Удалить эту операцию из журнала? Суммы пересчитаются.')) return;
       await withBusy(() => api('deleteFinance', { id: arg })); await reload();
@@ -1205,19 +1211,123 @@ function FinModal({ cats, staff, onClose, onSaved, onNeedCats }) {
 /* ===================== Shifts ===================== */
 const shiftLabel = (t) => t === 'day' ? 'День (сутки)' : 'Ночь 20:00–08:00';
 
-/* Операции (для персонала): добавить смену + график */
-function ShiftsTab({ db, onAdd, onPay, onEditPayment, onDelPayment, onReload }) {
-  const sh = db.shifts.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
-  const hours = sh.reduce((a, b) => a + (+b.hours || 0), 0);
-  const [switching, setSwitching] = useState(0);
+/* Правка смены: сотрудник, должность, дата и вид смены.
+   На один день у человека может быть только одна смена — сервер это проверит. */
+function ShiftEditModal({ row, db, onClose, onSaved }) {
+  const [name, setName] = useState(row?.fio || '');
+  const [role, setRole] = useState(row?.role || 'Охрана');
+  const [date, setDate] = useState(String(row?.date || '').slice(0, 10) || todayStr());
+  const [shift, setShift] = useState(shiftTypeOf(row));
+  const [busy, setBusy] = useState(false);
+  const people = [...new Set([...(db?.staff || []).map((x) => x.fio), row?.fio].filter(Boolean))].sort();
 
-  // Вид смены можно поправить прямо в графике — от него зависит сумма.
+  async function submit() {
+    if (!name.trim()) return alert('Укажите сотрудника');
+    setBusy(true);
+    try {
+      const r = await api('updateShift', { id: row.id, name: name.trim(), role, date, shift });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      onSaved();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <h2>Правка смены</h2>
+      <label>Сотрудник</label>
+      <select value={name} onChange={(e) => setName(e.target.value)}>
+        {people.map((p) => <option key={p} value={p}>{p}</option>)}
+      </select>
+      <label>Должность</label>
+      <select value={role} onChange={(e) => setRole(e.target.value)}>
+        {STAFF_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+      </select>
+      <label>Дата смены</label>
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      <label>Вид смены</label>
+      <div className="seg">
+        <button className={shift === 'night' ? 'on' : ''} onClick={() => setShift('night')}>Ночь</button>
+        <button className={shift === 'day' ? 'on' : ''} onClick={() => setShift('day')}>День</button>
+      </div>
+      <div className="small" style={{ marginTop: 6 }}>
+        На один день у сотрудника может быть только одна смена.
+      </div>
+      <button className="btn" disabled={busy} onClick={submit}>Сохранить</button>
+      <button className="btn sec" onClick={onClose}>Отмена</button>
+      <Busy show={busy} />
+    </>
+  );
+}
+
+/* Журнал смен: по датам, ранние сверху. Вид смены переключается нажатием,
+   строку можно поправить (✎) или удалить (✕). */
+function ShiftLog({ db, onEdit, onDelete, onReload }) {
+  const [switching, setSwitching] = useState(0);
+  const [all, setAll] = useState(false);
+  const log = db.shifts.slice().sort(
+    (a, b) => String(a.date).localeCompare(String(b.date)) || (Number(a.id) - Number(b.id)));
+  const shown = all ? log : log.slice(-30);
+
   async function flipShift(x) {
     const next = shiftTypeOf(x) === 'day' ? 'night' : 'day';
     setSwitching(x.id);
     try { await api('setShiftType', { id: x.id, shift: next }); await onReload?.(); }
     catch (e) { alert(e.message); } finally { setSwitching(0); }
   }
+
+  return (
+    <div className="card">
+      <h2 style={{ fontSize: 15 }}>Журнал смен</h2>
+      <div className="small">
+        Вид смены нажимается и переключается — сумма пересчитается. Ошиблись — ✎, лишнее — ✕.
+        {log.length > 30 && (
+          <> <button className="link" onClick={() => setAll(!all)}>
+            {all ? 'показать последние 30' : `показать все ${log.length}`}
+          </button></>
+        )}
+      </div>
+      {log.length ? (
+        <div style={{ overflow: 'auto', marginTop: 10 }}>
+          <table><tbody>
+            <tr><th>Дата</th><th>Сотрудник</th><th>Должн.</th><th>Смена</th><th>Ч</th><th>Подтв.</th><th></th></tr>
+            {shown.map((x) => {
+              const conf = x.confirmed
+                ? <span style={{ color: 'var(--incd)', fontWeight: 700 }}>✓</span>
+                : (x.role === 'Охрана' ? <span style={{ color: 'var(--warnd)' }}>ждёт</span> : '—');
+              const times = x.checkIn ? (timeHM(x.checkIn) + '–' + (x.checkOut ? timeHM(x.checkOut) : '…')) : '';
+              return (
+                <tr key={x.id}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmt(x.date)}</td>
+                  <td style={{ fontWeight: 600 }}>{x.fio}</td>
+                  <td>{x.role || ''}</td>
+                  <td>
+                    <button className="link" disabled={switching === x.id} onClick={() => flipShift(x)}
+                      title="Нажмите, чтобы поменять вид смены">
+                      {shiftTypeLabel(x)}
+                    </button>
+                    {times ? <span className="small"> · {times}</span> : ''}
+                  </td>
+                  <td>{x.checkIn && !x.checkOut ? '…' : (x.hours || '')}</td>
+                  <td>{conf}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <button className="link" onClick={() => onEdit?.(x)}>✎</button>
+                    {' '}
+                    <button className="link" style={{ color: 'var(--full)' }} onClick={() => onDelete?.(x.id)}>✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody></table>
+        </div>
+      ) : <div className="small" style={{ marginTop: 8 }}>Смен нет.</div>}
+    </div>
+  );
+}
+
+/* Операции (для персонала): добавить смену + график */
+function ShiftsTab({ db, onAdd, onPay, onEditPayment, onDelPayment, onEditShift, onDelShift, onReload }) {
+  const sh = db.shifts;
+  const hours = sh.reduce((a, b) => a + (+b.hours || 0), 0);
 
   return (
     <>
@@ -1234,43 +1344,13 @@ function ShiftsTab({ db, onAdd, onPay, onEditPayment, onDelPayment, onReload }) 
 
       <GuardPay db={db} onPay={onPay} onEditPayment={onEditPayment} onDelPayment={onDelPayment} onReload={onReload} />
 
-      <div className="card">
-        <h2 style={{ fontSize: 15 }}>График смен</h2>
-        <div className="small">Вид смены в таблице можно нажать и переключить — сумма пересчитается.</div>
-        {sh.length ? (
-          <div style={{ overflow: 'auto' }}>
-            <table><tbody>
-              <tr><th>Дата</th><th>Сотрудник</th><th>Должн.</th><th>Смена</th><th>Ч</th><th>Подтв.</th></tr>
-              {sh.map((x) => {
-                const conf = x.confirmed ? <span style={{ color: 'var(--incd)', fontWeight: 700 }}>✓</span> : (x.role === 'Охрана' ? <span style={{ color: 'var(--warnd)' }}>ждёт</span> : '—');
-                const times = x.checkIn ? (timeHM(x.checkIn) + '–' + (x.checkOut ? timeHM(x.checkOut) : '…')) : '';
-                return (
-                  <tr key={x.id}>
-                    <td>{fmt(x.date)}</td>
-                    <td style={{ fontWeight: 600 }}>{x.fio}</td>
-                    <td>{x.role || ''}</td>
-                    <td>
-                      <button className="link" disabled={switching === x.id} onClick={() => flipShift(x)}
-                        title="Нажмите, чтобы поменять вид смены">
-                        {shiftTypeLabel(x)}
-                      </button>
-                      {times ? <span className="small"> · {times}</span> : ''}
-                    </td>
-                    <td>{x.checkIn && !x.checkOut ? '…' : (x.hours || '')}</td>
-                    <td>{conf}</td>
-                  </tr>
-                );
-              })}
-            </tbody></table>
-          </div>
-        ) : <div className="small">Смен нет.</div>}
-      </div>
+      <ShiftLog db={db} onEdit={onEditShift} onDelete={onDelShift} onReload={onReload} />
     </>
   );
 }
 
 /* Табель (для учёта) */
-function ShiftsReport({ db, onPay, onEditPayment, onDelPayment, onReload }) {
+function ShiftsReport({ db, onPay, onEditPayment, onDelPayment, onEditShift, onDelShift, onReload }) {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(todayStr());
   const [tabel, setTabel] = useState(null);
@@ -1296,6 +1376,8 @@ function ShiftsReport({ db, onPay, onEditPayment, onDelPayment, onReload }) {
   return (
     <>
       <GuardPay db={db} onPay={onPay} onEditPayment={onEditPayment} onDelPayment={onDelPayment} onReload={onReload} />
+
+      <ShiftLog db={db} onEdit={onEditShift} onDelete={onDelShift} onReload={onReload} />
 
       <div className="card noprint">
         <h2 style={{ fontSize: 15 }}>Табель за период</h2>
@@ -1426,7 +1508,7 @@ function ReportTab({ db }) {
 }
 
 /* ===================== Админ-учёт (все отчёты) ===================== */
-function Uchet({ db, backToApp, onPay, onEditPayment, onDelPayment, onEditFin, onDelFin, onReload }) {
+function Uchet({ db, backToApp, onPay, onEditPayment, onDelPayment, onEditFin, onDelFin, onEditShift, onDelShift, onReload }) {
   const [seg, setSeg] = useState('stay');
   const segs = [['stay', '🏨 Проживание'], ['fin', '₸ Финансы'], ['shifts', '🕒 Смены']];
   return (
@@ -1444,7 +1526,8 @@ function Uchet({ db, backToApp, onPay, onEditPayment, onDelPayment, onEditFin, o
       {seg === 'stay' && <ReportTab db={db} />}
       {seg === 'fin' && <FinReport db={db} onEdit={onEditFin} onDelete={onDelFin} />}
       {seg === 'shifts' && <ShiftsReport db={db} onPay={onPay} onEditPayment={onEditPayment}
-                             onDelPayment={onDelPayment} onReload={onReload} />}
+                             onDelPayment={onDelPayment} onEditShift={onEditShift} onDelShift={onDelShift}
+                             onReload={onReload} />}
 
       <div className="card"><button className="btn sec" onClick={backToApp}>← назад в кабинет</button></div>
     </>
