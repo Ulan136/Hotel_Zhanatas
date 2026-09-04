@@ -130,6 +130,7 @@ export default function AdminPage() {
               {tab === 'shifts' && <ShiftsTab db={db}
                 onAdd={() => setModal({ type: 'shift' })}
                 onPay={(row) => setModal({ type: 'pay', data: row })}
+                onEditPayment={(p) => setModal({ type: 'payEdit', data: p })}
                 onDelPayment={(id) => handleDelete('payment', id)}
                 onReload={reload} />}
             </>}
@@ -157,6 +158,8 @@ export default function AdminPage() {
         {modal?.type === 'fin' && <FinModal cats={db.categories} staff={db.staff} onClose={closeModal} onSaved={() => afterSave()} onNeedCats={() => { closeModal(); openSettings('cats'); }} />}
         {modal?.type === 'shift' && <ShiftModal db={db} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'pay' && <PayModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
+        {modal?.type === 'payEdit' && <PayEditModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
+        {modal?.type === 'finEdit' && <FinEditModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'booking' && <BookingModal onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'guest' && <GuestModal guest={modal.data} onClose={closeModal} onSaved={() => afterSave('guests')} />}
         {modal?.type === 'staff' && <StaffModal worker={modal.data} onClose={closeModal} onSaved={() => afterSave('staff')} />}
@@ -184,6 +187,9 @@ export default function AdminPage() {
     } else if (kind === 'booking') {
       if (!confirm('Удалить заявку на бронь?')) return;
       await withBusy(() => api('deleteBooking', { id: arg })); await reload();
+    } else if (kind === 'finance') {
+      if (!confirm('Удалить эту операцию из журнала? Суммы пересчитаются.')) return;
+      await withBusy(() => api('deleteFinance', { id: arg })); await reload();
     } else if (kind === 'payment') {
       if (!confirm('Удалить эту выплату? Долг пересчитается.')) return;
       await withBusy(() => api('deletePayment', { id: arg })); await reload();
@@ -615,7 +621,7 @@ function guardRates(settings) {
   };
 }
 
-function GuardPay({ db, onPay, onDelPayment, onReload }) {
+function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
   const saved = guardRates(db.settings);
   const [rn, setRn] = useState(String(saved.night));
   const [rd, setRd] = useState(String(saved.day));
@@ -651,7 +657,11 @@ function GuardPay({ db, onPay, onDelPayment, onReload }) {
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
 
-  const recent = (db.payments || []).slice(0, 12);
+  // Журнал выплат: по датам, ранние сверху — как в тетради.
+  const [allPays, setAllPays] = useState(false);
+  const payLog = (db.payments || []).slice().sort(
+    (a, b) => String(a.date).localeCompare(String(b.date)) || (Number(a.id) - Number(b.id)));
+  const recent = allPays ? payLog : payLog.slice(-12);
 
   return (
     <div className="card">
@@ -719,9 +729,17 @@ function GuardPay({ db, onPay, onDelPayment, onReload }) {
         </div>
       )}
 
-      {recent.length > 0 && (
+      {payLog.length > 0 && (
         <>
-          <div className="block-title">История выплат<span>последние {recent.length}</span></div>
+          <div className="block-title">Журнал выплат<span>{payLog.length}</span></div>
+          <div className="small" style={{ marginBottom: 6 }}>
+            Каждую выплату можно исправить или удалить — долг пересчитается сразу.
+            {payLog.length > 12 && (
+              <> <button className="link" onClick={() => setAllPays(!allPays)}>
+                {allPays ? 'показать последние 12' : `показать все ${payLog.length}`}
+              </button></>
+            )}
+          </div>
           <div style={{ overflow: 'auto' }}>
             <table><tbody>
               <tr><th>Дата</th><th>Кому</th><th>Сумма</th><th>Комментарий</th><th></th></tr>
@@ -731,7 +749,11 @@ function GuardPay({ db, onPay, onDelPayment, onReload }) {
                   <td style={{ fontWeight: 600 }}>{p.fio}</td>
                   <td style={{ color: 'var(--incd)', fontWeight: 700 }}>{money(p.amount)}</td>
                   <td>{p.note || ''}</td>
-                  <td><button className="link" style={{ color: 'var(--full)' }} onClick={() => onDelPayment(p.id)}>удал.</button></td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <button className="link" onClick={() => onEditPayment?.(p)}>✎</button>
+                    {' '}
+                    <button className="link" style={{ color: 'var(--full)' }} onClick={() => onDelPayment(p.id)}>✕</button>
+                  </td>
                 </tr>
               ))}
             </tbody></table>
@@ -803,6 +825,92 @@ function PayModal({ row, onClose, onSaved }) {
   );
 }
 
+/* Правка выплаты: сумма, дата, комментарий. Кому — не меняем,
+   иначе долг «переедет» на другого человека незаметно. */
+function PayEditModal({ row, onClose, onSaved }) {
+  const [amount, setAmount] = useState(String(Math.round(+row?.amount || 0)));
+  const [date, setDate] = useState(String(row?.date || '').slice(0, 10) || todayStr());
+  const [note, setNote] = useState(row?.note || '');
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    const num = Number(amount) || 0;
+    if (!(num > 0)) return alert('Укажите сумму больше нуля');
+    setBusy(true);
+    try {
+      const r = await api('updatePayment', { id: row.id, fio: row.fio, amount: num, date, note: note.trim() });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      onSaved();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <h2>Правка выплаты</h2>
+      <div className="small">Кому: <b>{row?.fio}</b>. Долг пересчитается сразу после сохранения.</div>
+      <label>Сумма, ₸</label>
+      <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ''))} />
+      <label>Дата выплаты</label>
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      <label>Комментарий</label>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="например: аванс за сентябрь" />
+      <button className="btn" disabled={busy} onClick={submit}>Сохранить</button>
+      <button className="btn sec" onClick={onClose}>Отмена</button>
+      <Busy show={busy} />
+    </>
+  );
+}
+
+/* Правка операции журнала: тип, категория, сумма, дата, комментарий. */
+function FinEditModal({ row, onClose, onSaved }) {
+  const [type, setType] = useState(row?.type === 'income' ? 'income' : 'expense');
+  const [category, setCategory] = useState(row?.category || '');
+  const [subcategory, setSubcategory] = useState(row?.subcategory || '');
+  const [amount, setAmount] = useState(String(Math.round(Math.abs(+row?.amount || 0))));
+  const [date, setDate] = useState(String(row?.date || '').slice(0, 10) || todayStr());
+  const [note, setNote] = useState(row?.note || '');
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    const num = Number(amount) || 0;
+    if (!(num > 0)) return alert('Укажите сумму больше нуля');
+    if (!date) return alert('Укажите дату');
+    setBusy(true);
+    try {
+      const r = await api('updateFinance', {
+        id: row.id, type, category: category.trim(), subcategory: subcategory.trim(),
+        amount: num, date, note: note.trim(),
+      });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      onSaved();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <h2>Правка операции</h2>
+      <label>Тип</label>
+      <div className="seg">
+        <button className={type === 'expense' ? 'on' : ''} onClick={() => setType('expense')}>Расход</button>
+        <button className={type === 'income' ? 'on' : ''} onClick={() => setType('income')}>Доход</button>
+      </div>
+      <label>Категория</label>
+      <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="например: Зарплата" />
+      <label>Подкатегория</label>
+      <input value={subcategory} onChange={(e) => setSubcategory(e.target.value)} placeholder="необязательно" />
+      <label>Сумма, ₸</label>
+      <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ''))} />
+      <label>Дата</label>
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      <label>Комментарий</label>
+      <input value={note} onChange={(e) => setNote(e.target.value)} />
+      <button className="btn" disabled={busy} onClick={submit}>Сохранить</button>
+      <button className="btn sec" onClick={onClose}>Отмена</button>
+      <Busy show={busy} />
+    </>
+  );
+}
+
 /* ===================== Finance — операции (для персонала) ===================== */
 function FinTab({ db, onAdd }) {
   const f = db.finance;
@@ -834,7 +942,8 @@ function FinTab({ db, onAdd }) {
 }
 
 /* ===================== Finance — отчёт (для учёта) ===================== */
-function FinReport({ db }) {
+function FinReport({ db, onEdit, onDelete }) {
+  const [allOps, setAllOps] = useState(false);
   const f = db.finance;
   const inc = f.filter((x) => x.type === 'income').reduce((a, b) => a + +b.amount, 0);
   const exp = f.filter((x) => x.type === 'expense').reduce((a, b) => a + +b.amount, 0);
@@ -865,6 +974,10 @@ function FinReport({ db }) {
   });
   const months = Object.keys(byMonth).sort().reverse();
 
+  // Журнал: по дате, ранние сверху; последние записи — внизу, как в тетради.
+  const log = f.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || (Number(a.id) - Number(b.id)));
+  const shownLog = allOps ? log : log.slice(-30);
+
   function exportOps() {
     const rows = [['Дата', 'Тип', 'Категория', 'Подкатегория', 'Сумма', 'Комментарий']];
     f.slice().sort((a, b) => String(a.date).localeCompare(String(b.date))).forEach((x) => {
@@ -891,6 +1004,43 @@ function FinReport({ db }) {
           <div className="tile" style={{ background: 'var(--fullbg)' }}><div className="l" style={{ color: 'var(--expd)' }}>Расход</div><div className="v" style={{ fontSize: 18, color: 'var(--expd)' }}>{money(exp)}</div></div>
         </div>
         <div className="tile" style={{ background: 'var(--eef)', marginTop: 10 }}><div className="l" style={{ color: 'var(--primd)' }}>Остаток (доход − расход)</div><div className="v" style={{ fontSize: 20, color: 'var(--primd)' }}>{money(inc - exp)}</div></div>
+      </div>
+
+      {/* Журнал операций: как в тетради — по датам, ранние сверху,
+          каждую строку можно поправить или удалить. */}
+      <div className="card">
+        <h2 style={{ fontSize: 15 }}>Журнал операций</h2>
+        <div className="small">
+          Все расходы и доходы по датам. Ошиблись — нажмите ✎, лишнее — ✕.
+          {log.length > 30 && (
+            <> <button className="link" onClick={() => setAllOps(!allOps)}>
+              {allOps ? 'показать последние 30' : `показать все ${log.length}`}
+            </button></>
+          )}
+        </div>
+        {log.length ? (
+          <div style={{ overflow: 'auto', marginTop: 10 }}>
+            <table><tbody>
+              <tr><th>Дата</th><th>Статья</th><th style={{ textAlign: 'right' }}>Сумма</th><th>Комментарий</th><th></th></tr>
+              {shownLog.map((x) => (
+                <tr key={x.id}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmt(x.date)}</td>
+                  <td style={{ fontWeight: 600 }}>{x.category}{x.subcategory ? ' › ' + x.subcategory : ''}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap',
+                               color: x.type === 'income' ? 'var(--incd)' : 'var(--expd)' }}>
+                    {x.type === 'income' ? '+' : '−'}{money(Math.abs(x.amount))}
+                  </td>
+                  <td>{x.note || ''}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <button className="link" onClick={() => onEdit?.(x)}>✎</button>
+                    {' '}
+                    <button className="link" style={{ color: 'var(--full)' }} onClick={() => onDelete?.(x.id)}>✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody></table>
+          </div>
+        ) : <div className="small" style={{ marginTop: 8 }}>Операций пока нет.</div>}
       </div>
 
       <div className="card">
@@ -1056,7 +1206,7 @@ function FinModal({ cats, staff, onClose, onSaved, onNeedCats }) {
 const shiftLabel = (t) => t === 'day' ? 'День (сутки)' : 'Ночь 20:00–08:00';
 
 /* Операции (для персонала): добавить смену + график */
-function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
+function ShiftsTab({ db, onAdd, onPay, onEditPayment, onDelPayment, onReload }) {
   const sh = db.shifts.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   const hours = sh.reduce((a, b) => a + (+b.hours || 0), 0);
   const [switching, setSwitching] = useState(0);
@@ -1082,7 +1232,7 @@ function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
         <div className="small" style={{ marginTop: 8 }}>Охранников заводите в «⚙ Настройки → Работники» (должность «Охрана»).</div>
       </div>
 
-      <GuardPay db={db} onPay={onPay} onDelPayment={onDelPayment} onReload={onReload} />
+      <GuardPay db={db} onPay={onPay} onEditPayment={onEditPayment} onDelPayment={onDelPayment} onReload={onReload} />
 
       <div className="card">
         <h2 style={{ fontSize: 15 }}>График смен</h2>
@@ -1120,7 +1270,7 @@ function ShiftsTab({ db, onAdd, onPay, onDelPayment, onReload }) {
 }
 
 /* Табель (для учёта) */
-function ShiftsReport({ db, onPay, onDelPayment, onReload }) {
+function ShiftsReport({ db, onPay, onEditPayment, onDelPayment, onReload }) {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(todayStr());
   const [tabel, setTabel] = useState(null);
@@ -1145,7 +1295,7 @@ function ShiftsReport({ db, onPay, onDelPayment, onReload }) {
 
   return (
     <>
-      <GuardPay db={db} onPay={onPay} onDelPayment={onDelPayment} onReload={onReload} />
+      <GuardPay db={db} onPay={onPay} onEditPayment={onEditPayment} onDelPayment={onDelPayment} onReload={onReload} />
 
       <div className="card noprint">
         <h2 style={{ fontSize: 15 }}>Табель за период</h2>
@@ -1276,7 +1426,7 @@ function ReportTab({ db }) {
 }
 
 /* ===================== Админ-учёт (все отчёты) ===================== */
-function Uchet({ db, backToApp, onPay, onDelPayment, onReload }) {
+function Uchet({ db, backToApp, onPay, onEditPayment, onDelPayment, onEditFin, onDelFin, onReload }) {
   const [seg, setSeg] = useState('stay');
   const segs = [['stay', '🏨 Проживание'], ['fin', '₸ Финансы'], ['shifts', '🕒 Смены']];
   return (
@@ -1292,8 +1442,9 @@ function Uchet({ db, backToApp, onPay, onDelPayment, onReload }) {
       </div>
 
       {seg === 'stay' && <ReportTab db={db} />}
-      {seg === 'fin' && <FinReport db={db} />}
-      {seg === 'shifts' && <ShiftsReport db={db} onPay={onPay} onDelPayment={onDelPayment} onReload={onReload} />}
+      {seg === 'fin' && <FinReport db={db} onEdit={onEditFin} onDelete={onDelFin} />}
+      {seg === 'shifts' && <ShiftsReport db={db} onPay={onPay} onEditPayment={onEditPayment}
+                             onDelPayment={onDelPayment} onReload={onReload} />}
 
       <div className="card"><button className="btn sec" onClick={backToApp}>← назад в кабинет</button></div>
     </>
