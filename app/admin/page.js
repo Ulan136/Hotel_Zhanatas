@@ -113,7 +113,12 @@ export default function AdminPage() {
           : screen === 'uchet'
           ? <Uchet db={db} backToApp={() => setScreen('tabs')}
               onPay={(row) => setModal({ type: 'pay', data: row })}
+              onEditPayment={(p) => setModal({ type: 'payEdit', data: p })}
               onDelPayment={(id) => handleDelete('payment', id)}
+              onEditFin={(x) => setModal({ type: 'finEdit', data: x })}
+              onDelFin={(id) => handleDelete('finance', id)}
+              onEditShift={(x) => setModal({ type: 'shiftEdit', data: x })}
+              onDelShift={(id) => handleDelete('shift', id)}
               onReload={reload} />
           : <>
               {tab === 'rooms' && <RoomsTab db={db} checkedAt={checkedAt}
