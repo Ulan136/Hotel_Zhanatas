@@ -36,7 +36,7 @@ const NEED = {
   categories: 'reception', addCategory: 'reception', updateCategory: 'reception', deleteCategory: 'reception',
   addFinance: 'reception', updateFinance: 'reception', deleteFinance: 'reception',
   payments: 'reception', addPayment: 'reception', updatePayment: 'reception', deletePayment: 'reception',
-  shifts: 'reception', setShiftType: 'reception', deleteShift: 'reception',
+  shifts: 'reception', updateShift: 'reception', setShiftType: 'reception', deleteShift: 'reception',
   moveStay: 'reception', updateStay: 'reception',
   updateBooking: 'reception', deleteBooking: 'reception',
 
@@ -452,11 +452,28 @@ const handlers = {
                            FROM shifts ORDER BY sdate DESC, id DESC`;
     return ok(rows);
   },
+  /* Один человек — одна смена в день. Иначе за один день начислялось дважды. */
   async addShift({ name, role, date, shift, hours, checkIn, checkOut }) {
     if (!name) return fail('Укажите сотрудника');
+    if (!date) return fail('Укажите дату');
+    const dup = await sql`SELECT 1 FROM shifts WHERE fio = ${name} AND sdate = ${date} LIMIT 1`;
+    if (dup.length) return fail(`${name} уже отмечен на ${date}. На один день — одна смена.`);
     await sql`INSERT INTO shifts (fio, role, sdate, shift, hours, check_in, check_out, confirmed)
               VALUES (${name}, ${role || ''}, ${date}, ${shift === 'day' ? 'day' : 'night'}, ${parseFloat(hours) || 0},
                       ${checkIn || null}, ${checkOut || null}, true)`;
+    return ok({ ok: true });
+  },
+  // Правка записи в журнале смен: сотрудник, должность, дата, вид смены.
+  async updateShift({ id, name, role, date, shift }) {
+    if (!id) return fail('Нет записи');
+    if (!name) return fail('Укажите сотрудника');
+    if (!date) return fail('Укажите дату');
+    const dup = await sql`SELECT 1 FROM shifts WHERE fio = ${name} AND sdate = ${date} AND id <> ${Number(id)} LIMIT 1`;
+    if (dup.length) return fail(`${name} уже отмечен на ${date}. На один день — одна смена.`);
+    const t = shift === 'day' ? 'day' : 'night';
+    await sql`UPDATE shifts SET fio = ${name}, role = ${role || ''}, sdate = ${date},
+                shift = ${t}, hours = ${t === 'day' ? 24 : 12}
+              WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
 
@@ -566,6 +583,11 @@ const handlers = {
   async guardIn({ name }) {
     const open = await sql`SELECT 1 FROM shifts WHERE fio = ${name} AND check_in IS NOT NULL AND check_out IS NULL LIMIT 1`;
     if (open.length) return fail('Вы уже на смене');
+    // За один день смена отмечается один раз — второй приход не пишем.
+    const today = await sql`SELECT 1 FROM shifts
+                             WHERE fio = ${name}
+                               AND sdate = (now() AT TIME ZONE 'Asia/Almaty')::date LIMIT 1`;
+    if (today.length) return fail('Смена на сегодня уже отмечена. Один день — одна смена.');
     // Дату берём по Астане, вид смены — по дню недели (сб/вс — День, иначе Ночь).
     const rows = await sql`INSERT INTO shifts (fio, role, sdate, shift, check_in)
                            SELECT ${name}, 'Охрана', d,
