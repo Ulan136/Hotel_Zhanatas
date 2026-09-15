@@ -47,8 +47,12 @@ input:focus,select:focus{outline:none;border-color:var(--primary)}
 .room.free{background:var(--freebg)} .room.free .s{color:var(--incd)}
 .room.occ{background:var(--fullbg)} .room.occ .s{color:var(--expd)}
 .room.book{background:var(--partbg)} .room.book .s{color:var(--warnd)}
+/* Занято одно место из двух: комната не пустая, но подселить можно. */
+.room.part{background:var(--panel)} .room.part .s{color:var(--ink)}
+.room .s.free2{color:var(--incd);font-weight:700}
 .room .bar{position:absolute;left:0;top:0;bottom:0;width:4px}
 .room.free .bar{background:var(--free)} .room.occ .bar{background:var(--full)} .room.book .bar{background:var(--part)}
+.room.part .bar{background:linear-gradient(var(--full) 50%, var(--free) 50%)}
 .legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);margin:6px 0 12px;flex-wrap:wrap}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
 .tabbar{position:fixed;bottom:0;left:0;right:0;max-width:520px;margin:0 auto;background:var(--card);border-top:1px solid var(--line);display:flex;z-index:6}
