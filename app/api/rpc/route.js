@@ -37,7 +37,7 @@ const NEED = {
   addFinance: 'reception', updateFinance: 'reception', deleteFinance: 'reception',
   payments: 'reception', addPayment: 'reception', updatePayment: 'reception', deletePayment: 'reception',
   shifts: 'reception', updateShift: 'reception', setShiftType: 'reception', deleteShift: 'reception',
-  moveStay: 'reception', updateStay: 'reception',
+  moveStay: 'reception', updateStay: 'reception', setRoomSeats: 'reception',
   updateBooking: 'reception', deleteBooking: 'reception',
 
   // администратор
@@ -66,6 +66,18 @@ export async function POST(req) {
     console.error('[rpc]', action, e);
     return fail(e?.message || 'Ошибка сервера');
   }
+}
+
+/* Свободное место в комнате: 1-е или 2-е, смотря сколько мест и кто занят. */
+async function freeSlot(room) {
+  const rn = Number(room);
+  const r = await sql`SELECT seats FROM rooms WHERE room = ${rn}`;
+  if (!r.length) return { ok: false, error: 'Такой комнаты нет' };
+  const seats = Number(r[0].seats) || 1;
+  const taken = await sql`SELECT slot FROM stays WHERE room = ${rn} AND status <> 'closed'`;
+  const used = new Set(taken.map((x) => Number(x.slot) || 1));
+  for (let i = 1; i <= seats; i++) if (!used.has(i)) return { ok: true, slot: i, seats };
+  return { ok: false, error: seats === 1 ? 'комната занята' : 'оба места заняты' };
 }
 
 const handlers = {
@@ -149,8 +161,8 @@ const handlers = {
       sql`SELECT id, fio, role, sdate::text AS date, shift, hours::float8 AS hours,
                  check_in AS "checkIn", check_out AS "checkOut", confirmed
           FROM shifts ORDER BY sdate DESC, id DESC`,
-      sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, arrived_at AS "arrivedAt", departed_at AS "departedAt", status, source FROM stays ORDER BY arrival DESC, id DESC`,
-      sql`SELECT room FROM rooms ORDER BY room`,
+      sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, arrived_at AS "arrivedAt", departed_at AS "departedAt", status, source, slot FROM stays ORDER BY arrival DESC, id DESC`,
+      sql`SELECT room, seats FROM rooms ORDER BY room`,
       sql`SELECT id, fio, amount::float8 AS amount, pdate::text AS date, note
           FROM payments ORDER BY pdate DESC, id DESC`,
       sql`SELECT skey, svalue FROM settings`,
@@ -162,12 +174,20 @@ const handlers = {
     const settings = {};
     for (const r of settingRows) settings[r.skey] = r.svalue;
 
+    /* В комнате может быть одно или два места (второе добавляет ресепшн).
+       Поэтому у комнаты не один жилец, а список — до двух человек. */
     const active = {};
-    for (const s of stays) if (s.status !== 'closed') active[s.room] = s;
+    for (const s of stays) {
+      if (s.status === 'closed') continue;
+      (active[s.room] = active[s.room] || []).push(s);
+    }
     const rooms = roomRows.map((r) => {
-      const st = active[r.room];
-      const status = !st ? 'free' : (st.status === 'booked' ? 'book' : 'occ');
-      return { room: r.room, status, stay: st || null };
+      const list = (active[r.room] || []).sort((a, b) => (a.slot || 1) - (b.slot || 1));
+      const seats = Number(r.seats) || 1;
+      const status = !list.length ? 'free'
+        : list.length < seats ? 'part'
+        : list.every((x) => x.status === 'booked') ? 'book' : 'occ';
+      return { room: r.room, seats, status, stays: list, stay: list[0] || null };
     });
     const guards = staff.filter((s) => s.role === 'Охрана').map((s) => s.fio);
 
@@ -293,25 +313,32 @@ const handlers = {
 
   /* ---------- Комнаты / заселения ---------- */
   async stays() {
-    const rows = await sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, arrived_at AS "arrivedAt", departed_at AS "departedAt", status, source FROM stays ORDER BY arrival DESC, id DESC`;
+    const rows = await sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival, departure::text AS departure, arrived_at AS "arrivedAt", departed_at AS "departedAt", status, source, slot FROM stays ORDER BY arrival DESC, id DESC`;
     return ok(rows);
   },
+  // Свободна не только пустая комната, но и та, где занято одно место из двух.
   async freeRooms() {
-    const rows = await sql`SELECT room FROM rooms WHERE room NOT IN (SELECT room FROM stays WHERE status <> 'closed') ORDER BY room`;
+    const rows = await sql`
+      SELECT r.room
+        FROM rooms r
+        LEFT JOIN (SELECT room, count(*)::int AS n FROM stays WHERE status <> 'closed' GROUP BY room) a
+               ON a.room = r.room
+       WHERE COALESCE(a.n, 0) < r.seats
+       ORDER BY r.room`;
     return ok(rows.map((r) => r.room));
   },
   // Дата выбытия при заселении НЕ указывается — она проставляется при выселении (checkout).
   async checkin({ guestId, fio, room, arrival, arrivedAt, source, bookingId }) {
     if (!arrival) return fail('Укажите дату прибытия');
     const rn = Number(room);
-    const busy = await sql`SELECT 1 FROM stays WHERE room = ${rn} AND status <> 'closed' LIMIT 1`;
-    if (busy.length) return fail('Комната уже занята — выберите другую.');
+    const slot = await freeSlot(rn);
+    if (!slot.ok) return fail(slot.error);
     try {
-      await sql`INSERT INTO stays (guest_id, fio, room, arrival, departure, arrived_at, status, source)
-                VALUES (${guestId ? Number(guestId) : null}, ${fio}, ${rn}, ${arrival}, NULL,
+      await sql`INSERT INTO stays (guest_id, fio, room, slot, arrival, departure, arrived_at, status, source)
+                VALUES (${guestId ? Number(guestId) : null}, ${fio}, ${rn}, ${slot.slot}, ${arrival}, NULL,
                         ${arrivedAt || null}, 'on_shift', ${source || ''})`;
     } catch (e) {
-      if (e.code === '23505') return fail('Комнату только что заняли — выберите другую.');
+      if (e.code === '23505') return fail('Место только что заняли — выберите другое.');
       throw e;
     }
     // Пришёл по заявке — снимаем её из ожидания, чтобы ресепшн не ждал дважды.
@@ -333,10 +360,25 @@ const handlers = {
     const exists = await sql`SELECT 1 FROM rooms WHERE room = ${n}`;
     if (!exists.length) return fail('Такой комнаты нет');
 
-    const busy = await sql`SELECT fio FROM stays WHERE room = ${n} AND status <> 'closed' LIMIT 1`;
-    if (busy.length) return fail('Комната №' + n + ' занята: ' + busy[0].fio);
+    const slot = await freeSlot(n);
+    if (!slot.ok) return fail('Комната №' + n + ': ' + slot.error);
 
-    await sql`UPDATE stays SET room = ${n} WHERE id = ${Number(id)}`;
+    await sql`UPDATE stays SET room = ${n}, slot = ${slot.slot} WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
+
+  /* Второе место в комнате. Не у всех номеров две кровати, поэтому место
+     добавляет ресепшн вручную — и только после этого можно подселить второго. */
+  async setRoomSeats({ room, seats }) {
+    const rn = Number(room);
+    const n = Number(seats) === 2 ? 2 : 1;
+    const exists = await sql`SELECT 1 FROM rooms WHERE room = ${rn}`;
+    if (!exists.length) return fail('Такой комнаты нет');
+    const cur = await sql`SELECT count(*)::int AS n FROM stays WHERE room = ${rn} AND status <> 'closed'`;
+    if (n < cur[0].n) return fail('В комнате живут двое — сначала выселите одного.');
+    // Когда мест снова одно, единственного жильца переводим на первое место.
+    if (n === 1) await sql`UPDATE stays SET slot = 1 WHERE room = ${rn} AND status <> 'closed'`;
+    await sql`UPDATE rooms SET seats = ${n} WHERE room = ${rn}`;
     return ok({ ok: true });
   },
 
