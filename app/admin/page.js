@@ -123,7 +123,7 @@ export default function AdminPage() {
           : <>
               {tab === 'rooms' && <RoomsTab db={db} checkedAt={checkedAt}
                 onFree={(n) => setModal({ type: 'checkin', room: n })}
-                onOcc={(stay) => setModal({ type: 'room', stay })}
+                onOcc={(r) => setModal({ type: 'room', room: r })}
                 onBook={() => setModal({ type: 'booking' })}
                 onDelBooking={(id) => handleDelete('booking', id)}
                 onCloseBooking={async (b) => {
@@ -155,7 +155,8 @@ export default function AdminPage() {
 
       <Modal open={!!modal} onClose={closeModal}>
         {modal?.type === 'checkin' && <CheckinModal room={modal.room} guests={db.guests} onClose={closeModal} onSaved={() => afterSave()} />}
-        {modal?.type === 'room' && <RoomModal stay={modal.stay} rooms={db.rooms} onClose={closeModal}
+        {modal?.type === 'room' && <RoomModal room={modal.room} rooms={db.rooms} onClose={closeModal}
+          onAddGuest={(n) => setModal({ type: 'checkin', room: n })}
           onSaved={async () => { await reload(); closeModal(); }}
           onCheckout={async (id, departure, departedAt) => {
             const r = await withBusy(() => api('checkout', { id, departure, departedAt }));
@@ -292,8 +293,12 @@ function LoginForm({ onDone, setBusy }) {
 
 /* ===================== Rooms ===================== */
 function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, checkedAt }) {
-  let occ = 0, free = 0;
-  db.rooms.forEach((r) => { if (r.status === 'free') free++; else occ++; });
+  let occ = 0, free = 0, freeSeats = 0;
+  db.rooms.forEach((r) => {
+    const n = (r.stays || []).length;
+    if (!n) free++; else occ++;
+    freeSeats += Math.max(0, (Number(r.seats) || 1) - n);
+  });
   return (
     <div className="card">
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
@@ -307,15 +312,19 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
         <span><i className="dot" style={{ background: 'var(--free)' }} />свободно</span>
         <span><i className="dot" style={{ background: 'var(--full)' }} />занято</span>
         <span><i className="dot" style={{ background: 'var(--part)' }} />бронь</span>
+        <span><i className="dot" style={{ background: 'var(--line)' }} />есть 2-е место</span>
       </div>
       <div className="tiles" style={{ marginBottom: 12 }}>
         <div className="tile" style={{ background: 'var(--fullbg)' }}><div className="v" style={{ color: 'var(--expd)' }}>{occ}</div><div className="l" style={{ color: 'var(--expd)' }}>занято</div></div>
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="v" style={{ color: 'var(--incd)' }}>{free}</div><div className="l" style={{ color: 'var(--incd)' }}>свободно</div></div>
       </div>
+      <div className="small" style={{ marginTop: -6, marginBottom: 10 }}>
+        Свободных мест всего: <b>{freeSeats}</b> — с учётом вторых мест в комнатах.
+      </div>
       <Bookings db={db} onBook={onBook} onDel={onDelBooking} onClose={onCloseBooking} />
 
       {groupByBlock(db.rooms, (r) => r.room).map(({ block, items, from, to }) => {
-        const bfree = items.filter((r) => r.status === 'free').length;
+        const bfree = items.filter((r) => r.status === 'free' || r.status === 'part').length;
         return (
           <div key={block}>
             <div className="block-title">
@@ -324,14 +333,19 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
             </div>
             <div className="rooms">
               {items.map((r) => {
-                const cls = r.status === 'free' ? 'free' : r.status === 'occ' ? 'occ' : 'book';
-                // На занятой комнате вместо слова «занято» показываем, кто там живёт.
-                const who = r.stay ? shortName(r.stay.fio) : '';
-                const s = r.status === 'free' ? 'свободно' : (who || (r.status === 'occ' ? 'занято' : 'бронь'));
+                const who = r.stays || [];
+                const cls = r.status === 'free' ? 'free'
+                  : r.status === 'part' ? 'part'
+                  : r.status === 'occ' ? 'occ' : 'book';
                 return (
-                  <div key={r.room} className={'room ' + cls} title={r.stay?.fio || ''}
-                    onClick={() => r.status === 'free' ? onFree(r.room) : onOcc(r.stay)}>
-                    <div className="bar" /><div className="n">{r.room}</div><div className="s">{s}</div>
+                  <div key={r.room} className={'room ' + cls} title={who.map((x) => x.fio).join(' · ')}
+                    onClick={() => who.length ? onOcc(r) : onFree(r.room)}>
+                    <div className="bar" /><div className="n">{r.room}</div>
+                    {who.length
+                      ? who.map((x) => <div key={x.id} className="s">{shortName(x.fio)}</div>)
+                      : <div className="s">свободно</div>}
+                    {/* Второе место занято не всегда — пишем об этом прямо на плитке. */}
+                    {r.status === 'part' && <div className="s free2">+1 место</div>}
                   </div>
                 );
               })}
@@ -343,7 +357,76 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
   );
 }
 
-function RoomModal({ stay: s, rooms, onClose, onCheckout, onSaved }) {
+/* Карточка комнаты: список жильцов (их может быть двое), управление
+   вторым местом и подселение. Ниже — карточка выбранного человека. */
+function RoomModal({ room: rm, rooms, onClose, onCheckout, onSaved, onAddGuest }) {
+  const list = rm?.stays?.length ? rm.stays : (rm?.stay ? [rm.stay] : []);
+  const seats = Number(rm?.seats) || 1;
+  const [pick, setPick] = useState(0);
+  const [busySeat, setBusySeat] = useState(false);
+  const cur = list[Math.min(pick, Math.max(list.length - 1, 0))];
+
+  async function setSeats(n) {
+    if (n === 1 && !confirm('Убрать второе место в комнате №' + rm.room + '?')) return;
+    setBusySeat(true);
+    try {
+      const r = await api('setRoomSeats', { room: rm.room, seats: n });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      await onSaved?.();
+    } catch (e) { alert(e.message); } finally { setBusySeat(false); }
+  }
+
+  if (!cur) return (<><h2>Комната № {rm?.room}</h2><div className="small">В комнате никого нет.</div>
+    <button className="btn sec" onClick={onClose}>Закрыть</button></>);
+
+  return (
+    <>
+      <h2>Блок {blockOf(rm.room)} · комната № {rm.room}</h2>
+      <div className="small" style={{ marginTop: -4 }}>
+        Мест: <b>{seats}</b> · занято: <b>{list.length}</b>
+      </div>
+
+      {/* Двое в комнате — выбираем, чью карточку открыть */}
+      {list.length > 1 && (
+        <div className="seg" style={{ marginTop: 8 }}>
+          {list.map((x, i) => (
+            <button key={x.id} className={i === pick ? 'on' : ''} onClick={() => setPick(i)}>
+              {shortName(x.fio)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Второе место: сначала добавляем место, потом селим человека */}
+      <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: 'var(--eef)' }}>
+        {seats === 1 ? (
+          <>
+            <div className="small" style={{ color: 'var(--primd)' }}>
+              В комнате одно место. Если есть вторая кровать — добавьте место, и сможете подселить второго.
+            </div>
+            <button className="btn" disabled={busySeat} style={{ marginTop: 8 }}
+              onClick={() => setSeats(2)}>+ Добавить место</button>
+          </>
+        ) : list.length < 2 ? (
+          <>
+            <div className="small" style={{ color: 'var(--primd)' }}>Второе место свободно.</div>
+            <button className="btn" style={{ marginTop: 8 }}
+              onClick={() => onAddGuest?.(rm.room)}>+ Добавить гостя в комнату</button>
+            <button className="link" disabled={busySeat} style={{ display: 'block', margin: '8px auto 0' }}
+              onClick={() => setSeats(1)}>убрать второе место</button>
+          </>
+        ) : (
+          <div className="small" style={{ color: 'var(--primd)' }}>Оба места заняты.</div>
+        )}
+      </div>
+
+      <StayCard key={cur.id} s={cur} rooms={rooms} onCheckout={onCheckout} onSaved={onSaved} />
+      <button className="btn sec" onClick={onClose}>Закрыть</button>
+    </>
+  );
+}
+
+function StayCard({ s, rooms, onCheckout, onSaved }) {
   // Дата выбытия: по умолчанию сегодня, но её можно изменить — для поздних выселений.
   const [departure, setDeparture] = useState(todayStr());
   const [depTime, setDepTime] = useState(nowTime());
@@ -357,7 +440,9 @@ function RoomModal({ stay: s, rooms, onClose, onCheckout, onSaved }) {
 
   // Перевод в другую комнату: выбираем из свободных.
   const [move, setMove] = useState(false);
-  const freeRooms = (rooms || []).filter((r) => r.status === 'free').map((r) => r.room);
+  const freeRooms = (rooms || [])
+    .filter((r) => (r.status === 'free' || r.status === 'part') && r.room !== s.room)
+    .map((r) => r.room);
   const [toRoom, setToRoom] = useState('');
 
   const arrival = String(s.arrival || '').slice(0, 10);
@@ -395,8 +480,7 @@ function RoomModal({ stay: s, rooms, onClose, onCheckout, onSaved }) {
 
   return (
     <>
-      <h2>Блок {blockOf(s.room)} · комната № {s.room}</h2>
-      <div className="list-item">
+      <div className="list-item" style={{ marginTop: 10 }}>
         <div className="avatar">{initials(s.fio)}</div>
         <div style={{ flex: 1 }}><div style={{ fontWeight: 700 }}>{s.fio}</div><div className="small">{s.source || ''}</div></div>
         {s.status === 'booked' ? <span className="chip a">бронь</span> : <span className="chip g">на смене</span>}
@@ -466,7 +550,6 @@ function RoomModal({ stay: s, rooms, onClose, onCheckout, onSaved }) {
       </div>
 
       <button className="btn red" onClick={submit}>✓ Выселить</button>
-      <button className="btn sec" onClick={onClose}>Закрыть</button>
     </>
   );
 }
