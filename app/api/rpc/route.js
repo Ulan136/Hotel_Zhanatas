@@ -77,7 +77,7 @@ async function freeSlot(room) {
   const taken = await sql`SELECT slot FROM stays WHERE room = ${rn} AND status <> 'closed'`;
   const used = new Set(taken.map((x) => Number(x.slot) || 1));
   for (let i = 1; i <= seats; i++) if (!used.has(i)) return { ok: true, slot: i, seats };
-  return { ok: false, error: seats === 1 ? 'комната занята' : 'оба места заняты' };
+  return { ok: false, seats, error: seats === 1 ? 'комната занята' : 'оба места заняты' };
 }
 
 const handlers = {
@@ -332,7 +332,11 @@ const handlers = {
     if (!arrival) return fail('Укажите дату прибытия');
     const rn = Number(room);
     const slot = await freeSlot(rn);
-    if (!slot.ok) return fail(slot.error);
+    if (!slot.ok) {
+      return fail(slot.seats === 2
+        ? `В комнате №${rn} оба места заняты — выберите другую.`
+        : `Комната №${rn} занята — выберите другую или добавьте в неё второе место.`);
+    }
     try {
       await sql`INSERT INTO stays (guest_id, fio, room, slot, arrival, departure, arrived_at, status, source)
                 VALUES (${guestId ? Number(guestId) : null}, ${fio}, ${rn}, ${slot.slot}, ${arrival}, NULL,
