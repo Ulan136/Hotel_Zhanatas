@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS rooms (
   room        INT PRIMARY KEY
 );
 
+-- Мест в комнате: 1 или 2. Второе место добавляет ресепшн — не у всех номеров две кровати.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS seats INT NOT NULL DEFAULT 1;
+
 -- Заселения / брони
 CREATE TABLE IF NOT EXISTS stays (
   id          SERIAL PRIMARY KEY,
@@ -64,9 +67,13 @@ CREATE TABLE IF NOT EXISTS stays (
 ALTER TABLE stays ADD COLUMN IF NOT EXISTS arrived_at  TIMESTAMPTZ;
 ALTER TABLE stays ADD COLUMN IF NOT EXISTS departed_at TIMESTAMPTZ;
 
--- Надёжность: в одной комнате не может быть двух активных (не закрытых) заселений.
-CREATE UNIQUE INDEX IF NOT EXISTS one_active_stay_per_room
-  ON stays (room) WHERE status <> 'closed';
+-- Место в комнате: 1-е или 2-е.
+ALTER TABLE stays ADD COLUMN IF NOT EXISTS slot INT NOT NULL DEFAULT 1;
+
+-- Надёжность: одно активное заселение на одно место комнаты.
+DROP INDEX IF EXISTS one_active_stay_per_room;
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_stay_per_slot
+  ON stays (room, slot) WHERE status <> 'closed';
 
 -- Категории доходов/расходов (с подкатегориями через parent_id)
 CREATE TABLE IF NOT EXISTS categories (
