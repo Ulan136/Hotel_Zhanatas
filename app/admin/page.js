@@ -163,7 +163,7 @@ export default function AdminPage() {
             if (!r.ok) return alert(r.error || 'Ошибка');
             await afterSave();
           }} />}
-        {modal?.type === 'fin' && <FinModal cats={db.categories} staff={db.staff} onClose={closeModal} onSaved={() => afterSave()} onNeedCats={() => { closeModal(); openSettings('cats'); }} />}
+        {modal?.type === 'fin' && <FinModal db={db} cats={db.categories} staff={db.staff} onClose={closeModal} onSaved={() => afterSave()} onNeedCats={() => { closeModal(); openSettings('cats'); }} />}
         {modal?.type === 'shift' && <ShiftModal db={db} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'pay' && <PayModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'payEdit' && <PayEditModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
@@ -715,6 +715,26 @@ function guardRates(settings) {
   };
 }
 
+/* Сколько мы должны сотруднику. Начисление есть только у охраны (по сменам),
+   выплатой считается и старая запись в «выплатах», и расход по статье
+   «Зарплата › ФИО» — платим теперь через расходы, поэтому учитываем оба. */
+function staffMoney(db, fio) {
+  const name = String(fio || '').trim();
+  const rates = guardRates(db?.settings);
+  const shifts = (db?.shifts || []).filter((x) => x.role === 'Охрана' && x.fio === name);
+  const isGuard = shifts.length > 0
+    || (db?.staff || []).some((x) => x.fio === name && x.role === 'Охрана');
+  const e = guardEarned(shifts, rates);
+  const paidOld = (db?.payments || [])
+    .filter((p) => p.fio === name)
+    .reduce((a, p) => a + (+p.amount || 0), 0);
+  const paidFin = (db?.finance || [])
+    .filter((f) => f.type === 'expense' && isSalaryCat(f.category) && String(f.subcategory || '').trim() === name)
+    .reduce((a, f) => a + (+f.amount || 0), 0);
+  const paid = paidOld + paidFin;
+  return { isGuard, days: e.days, night: e.night, day: e.day, earned: e.amount, paid, debt: e.amount - paid };
+}
+
 function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
   const saved = guardRates(db.settings);
   const [rn, setRn] = useState(String(saved.night));
@@ -730,9 +750,8 @@ function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
   ]);
 
   const rows = [...names].filter(Boolean).sort((a, b) => a.localeCompare(b)).map((fio) => {
-    const e = guardEarned(guardShifts.filter((x) => x.fio === fio), rates);
-    const paid = (db.payments || []).filter((p) => p.fio === fio).reduce((a, p) => a + (+p.amount || 0), 0);
-    return { fio, ...e, paid, debt: e.amount - paid };
+    const m = staffMoney(db, fio);
+    return { fio, days: m.days, night: m.night, day: m.day, amount: m.earned, paid: m.paid, debt: m.debt };
   });
 
   const totalEarned = rows.reduce((a, r) => a + r.amount, 0);
@@ -765,6 +784,9 @@ function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
         {' '}<button className="link" onClick={() => setEditRates(!editRates)}>{editRates ? 'скрыть' : 'изменить ставки'}</button>
       </div>
       <div className="small">Считаем по виду смены. По субботам и воскресеньям смена предлагается дневная.</div>
+      <div className="small" style={{ marginTop: 4, color: 'var(--primd)' }}>
+        Здесь только расчёт. Платим через «₸ Расходы → Зарплата → сотрудник» — там сразу видно долг.
+      </div>
 
       {editRates && (
         <div style={{ marginTop: 8 }}>
@@ -811,9 +833,7 @@ function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
                       : <b style={{ color: 'var(--incd)' }}>рассчитан</b>}
                 </div>
               </div>
-              <button className={'btn ' + (r.debt > 0 ? '' : 'sec')}
-                style={{ margin: 0, width: 'auto', padding: '8px 12px', fontSize: 13 }}
-                onClick={() => onPay(r)}>Оплатить</button>
+
             </div>
           ))}
         </div>
@@ -1214,7 +1234,7 @@ function FragmentCat({ name, data }) {
 // Категория зарплаты: в подкатегорию подставляем список наших сотрудников.
 const isSalaryCat = (name) => /зарплат|зп\b|оплата труда/i.test(String(name || ''));
 
-function FinModal({ cats, staff, onClose, onSaved, onNeedCats }) {
+function FinModal({ db, cats, staff, onClose, onSaved, onNeedCats }) {
   const [type, setType] = useState('expense');
   const [cat, setCat] = useState('');
   const [sub, setSub] = useState('');
@@ -1229,6 +1249,8 @@ function FinModal({ cats, staff, onClose, onSaved, onNeedCats }) {
   // Для зарплаты подкатегория — это сотрудник; иначе обычные подкатегории.
   const workers = (staff || []).map((x) => x.fio).filter(Boolean).sort((a, b) => a.localeCompare(b));
   const subs = cat ? subCats(cats, cat) : [];
+  // Долг выбранному сотруднику — чтобы не искать сумму в другом разделе.
+  const owe = salary && sub ? staffMoney(db, sub) : null;
   useEffect(() => { setCat(tops[0]?.id ?? ''); setSub(''); /* eslint-disable-next-line */ }, [type]);
   useEffect(() => { setSub(''); }, [cat]);
 
@@ -1277,6 +1299,35 @@ function FinModal({ cats, staff, onClose, onSaved, onNeedCats }) {
             </div>
           )}
           <div className="small" style={{ marginTop: 6 }}>Кому платим. Попадёт в отчёт как «Зарплата › {sub || '—'}».</div>
+
+          {owe && (
+            <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: 'var(--eef)' }}>
+              {owe.isGuard ? (
+                <>
+                  <div className="small" style={{ color: 'var(--primd)' }}>
+                    {owe.days} смен ({owe.night} ноч. + {owe.day} дневн.) ·
+                    начислено <b>{money(owe.earned)}</b>
+                  </div>
+                  <div className="small" style={{ color: 'var(--primd)', marginTop: 2 }}>
+                    выплачено <b>{money(owe.paid)}</b>
+                  </div>
+                  <div style={{ marginTop: 6, fontWeight: 800, fontSize: 16,
+                                color: owe.debt > 0 ? 'var(--expd)' : 'var(--incd)' }}>
+                    {owe.debt > 0 ? `Должны ${money(owe.debt)}` :
+                     owe.debt < 0 ? `Переплата ${money(-owe.debt)}` : 'Долгов нет'}
+                  </div>
+                  {owe.debt > 0 && (
+                    <button className="link" style={{ marginTop: 6 }}
+                      onClick={() => setAmount(String(Math.round(owe.debt)))}>подставить весь долг</button>
+                  )}
+                </>
+              ) : (
+                <div className="small" style={{ color: 'var(--primd)' }}>
+                  Смены не ведём — выплачено за всё время <b>{money(money.paid)}</b>.
+                </div>
+              )}
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -1602,6 +1653,7 @@ function Uchet({ db, backToApp, onPay, onEditPayment, onDelPayment, onEditFin, o
   return (
     <>
       <div className="card">
+        <button className="link" style={{ marginBottom: 8 }} onClick={backToApp}>← назад в кабинет</button>
         <h2>📊 Админ-учёт</h2>
         <div className="small">Все отчёты гостиницы в одном месте: проживание вахты, финансы и табель смен.</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
@@ -1617,7 +1669,6 @@ function Uchet({ db, backToApp, onPay, onEditPayment, onDelPayment, onEditFin, o
                              onDelPayment={onDelPayment} onEditShift={onEditShift} onDelShift={onDelShift}
                              onReload={onReload} />}
 
-      <div className="card"><button className="btn sec" onClick={backToApp}>← назад в кабинет</button></div>
     </>
   );
 }
