@@ -157,7 +157,7 @@ const handlers = {
       sql`SELECT id, fio, iin, doc_no AS "docNo", birth_year AS "birthYear", company, position, destination, citizenship, phone FROM guests ORDER BY fio`,
       sql`SELECT id, fio, role, phone FROM staff ORDER BY fio`,
       sql`SELECT id, name, ctype AS type, parent_id AS parent FROM categories ORDER BY id`,
-      sql`SELECT id, ftype AS type, category, subcategory, amount::float8 AS amount, fdate::text AS date, note FROM finance ORDER BY id`,
+      sql`SELECT id, ftype AS type, category, subcategory, amount::float8 AS amount, fdate::text AS date, note, pay_month AS "payMonth" FROM finance ORDER BY id`,
       sql`SELECT id, fio, role, sdate::text AS date, shift, hours::float8 AS hours,
                  check_in AS "checkIn", check_out AS "checkOut", confirmed
           FROM shifts ORDER BY sdate DESC, id DESC`,
@@ -302,12 +302,15 @@ const handlers = {
   },
 
   /* ---------- Финансы ---------- */
-  async addFinance({ type, category, subcategory, amount, date, note }) {
+  /* payMonth — за какой месяц зарплата (ГГГГ-ММ). Нужен, чтобы выплата за
+     август не гасила долг за сентябрь: месяц работы и месяц выплаты разные. */
+  async addFinance({ type, category, subcategory, amount, date, note, payMonth }) {
     const t = type === 'income' ? 'income' : 'expense';
     const a = Math.abs(parseFloat(amount) || 0);
     if (!a) return fail('Укажите сумму');
-    await sql`INSERT INTO finance (ftype, category, subcategory, amount, fdate, note)
-              VALUES (${t}, ${category || ''}, ${subcategory || ''}, ${a}, ${date}, ${note || ''})`;
+    const pm = /^\d{4}-\d{2}$/.test(String(payMonth || '')) ? String(payMonth) : '';
+    await sql`INSERT INTO finance (ftype, category, subcategory, amount, fdate, note, pay_month)
+              VALUES (${t}, ${category || ''}, ${subcategory || ''}, ${a}, ${date}, ${note || ''}, ${pm})`;
     return ok({ ok: true });
   },
 
@@ -575,14 +578,16 @@ const handlers = {
   },
   /* Правка и удаление операции — журнал за прошлые дни можно исправить,
      не заводя «сторно» второй строкой. */
-  async updateFinance({ id, type, category, subcategory, amount, date, note }) {
+  async updateFinance({ id, type, category, subcategory, amount, date, note, payMonth }) {
     if (!id) return fail('Нет записи');
     const t = type === 'income' ? 'income' : 'expense';
     const a = Math.abs(parseFloat(amount) || 0);
     if (!a) return fail('Укажите сумму');
     if (!date) return fail('Укажите дату');
+    const pm = /^\d{4}-\d{2}$/.test(String(payMonth || '')) ? String(payMonth) : '';
     await sql`UPDATE finance SET ftype = ${t}, category = ${category || ''},
-                subcategory = ${subcategory || ''}, amount = ${a}, fdate = ${date}, note = ${note || ''}
+                subcategory = ${subcategory || ''}, amount = ${a}, fdate = ${date},
+                note = ${note || ''}, pay_month = ${pm}
               WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
