@@ -121,6 +121,14 @@ export default function GuardPage() {
         right={<Link className="link" style={{ color: '#fff' }} href="/">на главную</Link>} />
       <div className="content">
         {screen === 'list' && (
+          <Link className="big-choice" style={{ background: 'linear-gradient(135deg,#6366f1,#4f46e5)' }} href="/rooms">
+            <div className="ic">🏨</div>
+            <div className="t">Кто в комнатах</div>
+            <div className="d">посмотреть, кто где живёт — только просмотр</div>
+          </Link>
+        )}
+
+        {screen === 'list' && (
           <div className="card">
             <h2>🛡️ Учёт смен</h2>
             <div className="small">Выберите себя, чтобы записать смену.</div>
