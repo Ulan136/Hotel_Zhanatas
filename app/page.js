@@ -26,10 +26,15 @@ export default function Home() {
           <div className="t">Охрана — отметить смену</div>
           <div className="d">приход / уход по QR, часы считаются сами</div>
         </Link>
+        <Link className="big-choice" style={{ background: 'linear-gradient(135deg,#6366f1,#4f46e5)' }} href="/rooms">
+          <div className="ic">🏨</div>
+          <div className="t">Кто в комнатах</div>
+          <div className="d">экран для охраны — только просмотр, обновляется сам</div>
+        </Link>
         <div className="card">
           <div className="small">
             Общая база: Neon Postgres. Данные видны на всех устройствах в реальном времени.
-            Для QR используйте прямые адреса страниц: /guest, /guard, /report.
+            Для QR используйте прямые адреса страниц: /guest, /guard, /report, /rooms.
           </div>
         </div>
       </div>
