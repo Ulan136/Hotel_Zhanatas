@@ -22,7 +22,8 @@ function fail(error, status = 200) { return NextResponse.json({ ok: false, error
 const NEED = {
   // без входа
   hasAdmin: 'public', login: 'public', logout: 'public', me: 'public', register: 'public',
-  publicGuests: 'public', publicStays: 'public', publicBookings: 'public', freeRooms: 'public',
+  publicGuests: 'public', publicStays: 'public', publicBookings: 'public',
+  publicRooms: 'public', freeRooms: 'public',
   addGuest: 'public', updateGuest: 'public', checkin: 'public', checkout: 'public',
   guards: 'public', guardStatus: 'public', guardIn: 'public', guardOut: 'public', addShift: 'public',
 
@@ -216,6 +217,11 @@ const handlers = {
                             WHERE status = 'new' AND COALESCE(fio, '') <> ''
                             ORDER BY bdate, id`;
     return ok(rows);
+  },
+  // Комнаты для экрана охраны: номера и сколько в них мест. Без личных данных.
+  async publicRooms() {
+    const rows = await sql`SELECT room, seats FROM rooms ORDER BY room`;
+    return ok(rows.map((r) => ({ room: r.room, seats: Number(r.seats) || 1 })));
   },
   async publicStays() {
     const rows = await sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival,
