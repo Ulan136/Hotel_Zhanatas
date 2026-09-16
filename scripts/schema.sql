@@ -76,6 +76,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_active_stay_per_slot
   ON stays (room, slot) WHERE status <> 'closed';
 
 -- Категории доходов/расходов (с подкатегориями через parent_id)
+-- За какой месяц зарплата (ГГГГ-ММ): месяц работы и месяц выплаты не совпадают.
+ALTER TABLE finance ADD COLUMN IF NOT EXISTS pay_month TEXT NOT NULL DEFAULT '';
+
 CREATE TABLE IF NOT EXISTS categories (
   id          SERIAL PRIMARY KEY,
   name        TEXT NOT NULL,
