@@ -19,6 +19,15 @@ const subCats = (cats, pid) => cats.filter((c) => String(c.parent || '') === Str
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 function monthName(m) { const [y, mm] = m.split('-'); return (MONTHS[+mm - 1] || mm) + ' ' + y; }
+// Последние месяцы для выбора «зарплата за какой месяц».
+function lastMonths(n = 8) {
+  const out = []; const d = new Date();
+  for (let i = 0; i < n; i++) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
 
 export default function AdminPage() {
   const [sess, setSess] = useState(null);
@@ -725,14 +734,25 @@ function staffMoney(db, fio) {
   const isGuard = shifts.length > 0
     || (db?.staff || []).some((x) => x.fio === name && x.role === 'Охрана');
   const e = guardEarned(shifts, rates);
+
+  /* С какого месяца ведём расчёт: с первой смены этого человека в журнале.
+     Зарплата за более ранние месяцы (например, за август) уже выплачена и
+     долг за сентябрь не гасит — иначе выходила бы ложная переплата. */
+  const from = shifts.map((x) => String(x.date || '').slice(0, 7)).sort()[0] || '';
+  const sal = (db?.finance || []).filter((f) =>
+    f.type === 'expense' && isSalaryCat(f.category) && String(f.subcategory || '').trim() === name);
+  const inPeriod = (f) => {
+    const m = String(f.payMonth || '').slice(0, 7) || String(f.date || '').slice(0, 7);
+    return !from || m >= from;
+  };
   const paidOld = (db?.payments || [])
-    .filter((p) => p.fio === name)
+    .filter((p) => p.fio === name && (!from || String(p.date || '').slice(0, 7) >= from))
     .reduce((a, p) => a + (+p.amount || 0), 0);
-  const paidFin = (db?.finance || [])
-    .filter((f) => f.type === 'expense' && isSalaryCat(f.category) && String(f.subcategory || '').trim() === name)
-    .reduce((a, f) => a + (+f.amount || 0), 0);
+  const paidFin = sal.filter(inPeriod).reduce((a, f) => a + (+f.amount || 0), 0);
+  const closed = sal.filter((f) => !inPeriod(f)).reduce((a, f) => a + (+f.amount || 0), 0);
   const paid = paidOld + paidFin;
-  return { isGuard, days: e.days, night: e.night, day: e.day, earned: e.amount, paid, debt: e.amount - paid };
+  return { isGuard, from, days: e.days, night: e.night, day: e.day,
+           earned: e.amount, paid, closed, debt: e.amount - paid };
 }
 
 function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
@@ -751,7 +771,8 @@ function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
 
   const rows = [...names].filter(Boolean).sort((a, b) => a.localeCompare(b)).map((fio) => {
     const m = staffMoney(db, fio);
-    return { fio, days: m.days, night: m.night, day: m.day, amount: m.earned, paid: m.paid, debt: m.debt };
+    return { fio, days: m.days, night: m.night, day: m.day,
+             amount: m.earned, paid: m.paid, closed: m.closed, debt: m.debt };
   });
 
   const totalEarned = rows.reduce((a, r) => a + r.amount, 0);
@@ -786,6 +807,10 @@ function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
       <div className="small">Считаем по виду смены. По субботам и воскресеньям смена предлагается дневная.</div>
       <div className="small" style={{ marginTop: 4, color: 'var(--primd)' }}>
         Здесь только расчёт. Платим через «₸ Расходы → Зарплата → сотрудник» — там сразу видно долг.
+      </div>
+      <div className="small" style={{ marginTop: 2 }}>
+        Считаем с первой смены в журнале. Зарплата за более ранние месяцы — закрытый период,
+        она остаётся в расходах, но текущий долг не гасит.
       </div>
 
       {editRates && (
@@ -825,6 +850,7 @@ function GuardPay({ db, onPay, onEditPayment, onDelPayment, onReload }) {
                 </div>
                 <div className="small">
                   выплачено <b style={{ color: 'var(--incd)' }}>{money(r.paid)}</b>
+                  {r.closed > 0 && <> (+{money(r.closed)} за прошлые месяцы)</>}
                   {' · '}
                   {r.debt > 0
                     ? <>долг <b style={{ color: 'var(--expd)' }}>{money(r.debt)}</b></>
@@ -978,6 +1004,7 @@ function PayEditModal({ row, onClose, onSaved }) {
 /* Правка операции журнала: тип, категория, сумма, дата, комментарий. */
 function FinEditModal({ row, onClose, onSaved }) {
   const [type, setType] = useState(row?.type === 'income' ? 'income' : 'expense');
+  const [payMonth, setPayMonth] = useState(String(row?.payMonth || '').slice(0, 7));
   const [category, setCategory] = useState(row?.category || '');
   const [subcategory, setSubcategory] = useState(row?.subcategory || '');
   const [amount, setAmount] = useState(String(Math.round(Math.abs(+row?.amount || 0))));
@@ -993,7 +1020,7 @@ function FinEditModal({ row, onClose, onSaved }) {
     try {
       const r = await api('updateFinance', {
         id: row.id, type, category: category.trim(), subcategory: subcategory.trim(),
-        amount: num, date, note: note.trim(),
+        amount: num, date, note: note.trim(), payMonth,
       });
       if (!r.ok) return alert(r.error || 'Ошибка');
       onSaved();
@@ -1010,6 +1037,19 @@ function FinEditModal({ row, onClose, onSaved }) {
       </div>
       <label>Категория</label>
       <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="например: Зарплата" />
+
+      {isSalaryCat(category) && (
+        <>
+          <label>Зарплата за месяц</label>
+          <select value={payMonth} onChange={(e) => setPayMonth(e.target.value)}>
+            <option value="">— не указан —</option>
+            {lastMonths(12).map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
+          </select>
+          <div className="small" style={{ marginTop: 4 }}>
+            За какой месяц работы эта выплата. Влияет на расчёт долга охране.
+          </div>
+        </>
+      )}
       <label>Подкатегория</label>
       <input value={subcategory} onChange={(e) => setSubcategory(e.target.value)} placeholder="необязательно" />
       <label>Сумма, ₸</label>
@@ -1241,6 +1281,7 @@ function FinModal({ db, cats, staff, onClose, onSaved, onNeedCats }) {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(todayStr());
   const [note, setNote] = useState('');
+  const [payMonth, setPayMonth] = useState(lastMonths(1)[0]);
   const [busy, setBusy] = useState(false);
 
   const tops = topCats(cats, type);
@@ -1262,7 +1303,7 @@ function FinModal({ db, cats, staff, onClose, onSaved, onNeedCats }) {
     const c = cats.find((x) => String(x.id) === String(cat));
     setBusy(true);
     try {
-      await api('addFinance', { type, category: c?.name, subcategory: sub, amount: a, date, note });
+      await api('addFinance', { type, category: c?.name, subcategory: sub, amount: a, date, note, payMonth: salary ? payMonth : '' });
       onSaved();
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
@@ -1300,6 +1341,14 @@ function FinModal({ db, cats, staff, onClose, onSaved, onNeedCats }) {
           )}
           <div className="small" style={{ marginTop: 6 }}>Кому платим. Попадёт в отчёт как «Зарплата › {sub || '—'}».</div>
 
+          <label>Зарплата за месяц</label>
+          <select value={payMonth} onChange={(e) => setPayMonth(e.target.value)}>
+            {lastMonths(8).map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
+          </select>
+          <div className="small" style={{ marginTop: 4 }}>
+            За какой месяц работы платим. Долг ниже считается только за месяцы, где есть смены.
+          </div>
+
           {owe && (
             <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: 'var(--eef)' }}>
               {owe.isGuard ? (
@@ -1310,6 +1359,7 @@ function FinModal({ db, cats, staff, onClose, onSaved, onNeedCats }) {
                   </div>
                   <div className="small" style={{ color: 'var(--primd)', marginTop: 2 }}>
                     выплачено <b>{money(owe.paid)}</b>
+                    {owe.closed > 0 && <> · за прошлые месяцы {money(owe.closed)} (в расчёт не входит)</>}
                   </div>
                   <div style={{ marginTop: 6, fontWeight: 800, fontSize: 16,
                                 color: owe.debt > 0 ? 'var(--expd)' : 'var(--incd)' }}>
