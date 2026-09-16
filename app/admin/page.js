@@ -163,7 +163,8 @@ export default function AdminPage() {
       )}
 
       <Modal open={!!modal} onClose={closeModal}>
-        {modal?.type === 'checkin' && <CheckinModal room={modal.room} guests={db.guests} onClose={closeModal} onSaved={() => afterSave()} />}
+        {modal?.type === 'checkin' && <CheckinModal room={modal.room} guests={db.guests} rooms={db.rooms}
+          onClose={closeModal} onSaved={() => afterSave()} onReload={reload} />}
         {modal?.type === 'room' && <RoomModal room={modal.room} rooms={db.rooms} onClose={closeModal}
           onAddGuest={(n) => setModal({ type: 'checkin', room: n })}
           onSaved={async () => { await reload(); closeModal(); }}
@@ -563,11 +564,28 @@ function StayCard({ s, rooms, onCheckout, onSaved }) {
   );
 }
 
-function CheckinModal({ room, guests, onClose, onSaved }) {
+function CheckinModal({ room, guests, rooms, onClose, onSaved, onReload }) {
   const [gid, setGid] = useState(guests[0]?.id ?? '');
   const [arrival, setArrival] = useState(todayStr());
   const [arrTime, setArrTime] = useState(nowTime());
   const [busy, setBusy] = useState(false);
+  const [busySeat, setBusySeat] = useState(false);
+
+  // Места можно добавить и здесь — гость по QR сам этого сделать не может.
+  const rm = (rooms || []).find((r) => Number(r.room) === Number(room));
+  const seats = Number(rm?.seats) || 1;
+  const taken = (rm?.stays || []).length;
+
+  async function setSeats(n) {
+    if (n === 1 && !confirm('Убрать второе место в комнате №' + room + '?')) return;
+    setBusySeat(true);
+    try {
+      const r = await api('setRoomSeats', { room, seats: n });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      await onReload?.();
+    } catch (e) { alert(e.message); } finally { setBusySeat(false); }
+  }
+
   async function submit() {
     if (!arrival) return alert('Укажите дату прибытия');
     const g = guests.find((x) => String(x.id) === String(gid));
@@ -582,6 +600,32 @@ function CheckinModal({ room, guests, onClose, onSaved }) {
   return (
     <>
       <h2>Заселить · блок {Math.floor(room / 100) || 1}, комната № {room}</h2>
+      <div className="small" style={{ marginTop: -4 }}>
+        Мест: <b>{seats}</b>{taken ? <> · занято: <b>{taken}</b></> : null}
+      </div>
+
+      <div style={{ margin: '10px 0', padding: 10, borderRadius: 10, background: 'var(--eef)' }}>
+        {seats === 1 ? (
+          <>
+            <div className="small" style={{ color: 'var(--primd)' }}>
+              Если в комнате две кровати — добавьте второе место, и туда можно будет подселить второго.
+            </div>
+            <button className="btn" disabled={busySeat} style={{ marginTop: 8 }}
+              onClick={() => setSeats(2)}>+ Добавить место</button>
+          </>
+        ) : (
+          <>
+            <div className="small" style={{ color: 'var(--primd)' }}>
+              В комнате два места — после заселения сюда можно подселить ещё одного.
+            </div>
+            {taken === 0 && (
+              <button className="link" disabled={busySeat} style={{ display: 'block', margin: '8px auto 0' }}
+                onClick={() => setSeats(1)}>убрать второе место</button>
+            )}
+          </>
+        )}
+      </div>
+
       {guests.length === 0
         ? <div className="small">Сначала добавьте гостя в ⚙ Настройки → Гости.</div>
         : <>
