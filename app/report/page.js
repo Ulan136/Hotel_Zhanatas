@@ -197,9 +197,9 @@ export default function ReportPage() {
     const rest = list.filter((s2) => !cat(s2));
     const when = (s2) => (s2.arrivedAt ? fmtDateTime(s2.arrivedAt) : fmt(s2.arrival));
 
-    /* Комната считается вахтовой или ИТР по тому, кто в ней живёт сейчас.
-       Свободные комнаты ни за кем не закреплены — они доступны обеим
-       категориям, поэтому одно и то же число стоит в обеих колонках. */
+    /* Категория комнаты видна по тому, кто в ней живёт. Свободная комната
+       берёт категорию своего блока: на деле блок 1 занят ИТР, блок 2 — вахтой,
+       и отдельно закреплять комнаты не нужно — система видит это сама. */
     const roomCat = new Map();
     for (const s2 of active) {
       const c = cat(s2);
@@ -209,6 +209,23 @@ export default function ReportPage() {
     }
     const busyVah = [...roomCat.values()].filter((c) => c === 'Вахтовый' || c === 'оба').length;
     const busyItr = [...roomCat.values()].filter((c) => c === 'ИТР' || c === 'оба').length;
+
+    // Чья это половина гостиницы — считаем по жильцам блока.
+    const perBlock = new Map();
+    for (const [room, c] of roomCat) {
+      const b = blockOf(room);
+      const t = perBlock.get(b) || { itr: 0, vah: 0 };
+      if (c === 'ИТР' || c === 'оба') t.itr++;
+      if (c === 'Вахтовый' || c === 'оба') t.vah++;
+      perBlock.set(b, t);
+    }
+    let freeVah = 0, freeItr = 0;
+    for (const n of freeRooms) {
+      const t = perBlock.get(blockOf(n)) || { itr: 0, vah: 0 };
+      if (t.itr > t.vah) freeItr++;
+      else if (t.vah > t.itr) freeVah++;
+      else { freeItr++; freeVah++; }   // блок пуст или смешанный — комната подойдёт обоим
+    }
     // Гости по заявке — теперь с категорией, её указывают уже при подаче заявки.
     const wait = (bookings || []).filter((b) => b.status !== 'closed');
     const cnt = (t) => wait.filter((b) => stayTypeLabel(b.stayType) === t)
@@ -238,7 +255,7 @@ export default function ReportPage() {
         v ? when(v) : '', v ? v.fio : '', v ? (v.position || '') : '', v ? (v.destination || '') : '',
         t ? when(t) : '', t ? t.fio : '', t ? (t.position || '') : '',
         i === 0 ? busyVah : '', i === 0 ? busyItr : '',
-        i === 0 ? freeRooms.length : '', i === 0 ? freeRooms.length : '',
+        i === 0 ? freeVah : '', i === 0 ? freeItr : '',
         i === 0 ? bookVah : '', i === 0 ? bookItr : '',
       ]);
     }
