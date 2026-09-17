@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { api, getSess, setSess, clearSess, getLastLogin, forgetMe, REPORT_SESS_KEY as SK } from '@/lib/client';
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { useLive, liveLabel } from '@/lib/live';
-import { fmt, fmtDateTime, timeHM, nightsNow, todayStr, groupByBlock, blockOf, formatPhone } from '@/lib/ui';
+import { fmt, fmtDateTime, timeHM, nightsNow, todayStr, groupByBlock, blockOf, formatPhone,
+         STAY_TYPES, stayTypeLabel } from '@/lib/ui';
 import { fuzzyScore } from '@/lib/fuzzy';
 import { downloadXlsx } from '@/lib/xlsx';
 import { downloadPdf } from '@/lib/pdf';
@@ -186,9 +187,40 @@ export default function ReportPage() {
     return { rows: [[HOTEL], head, ...body], head };
   }
 
+  /* В Excel по нашему шаблону ИТР и вахта идут ДВУМЯ отдельными списками:
+     у каждого своя шапка и свой счёт людей. Сводные числа по гостинице
+     ставятся один раз — в первой строке первого списка, как в образце. */
   function exportExcel() {
-    const { rows } = buildReportRows();
-    downloadXlsx(`MEDINA_${effFrom}_${effTo}.xlsx`, rows, { sheetName: 'Отчёт', boldRows: [0, 1] });
+    const { head } = buildReportRows();
+    const line = (s, withTotals) => [
+      s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival),
+      s.departure ? (s.departedAt ? fmtDateTime(s.departedAt) : fmt(s.departure)) : '',
+      s.fio,
+      s.position || '',
+      withTotals ? busyRooms.size : '',
+      withTotals ? freeRooms.length : '',
+      withTotals ? booked : '',
+    ];
+
+    const groups = [
+      ['ИТР', list.filter((s) => stayTypeLabel(s.stayType) === 'ИТР')],
+      ['Вахтовый', list.filter((s) => stayTypeLabel(s.stayType) === 'Вахтовый')],
+      ['Без категории', list.filter((s) => !stayTypeLabel(s.stayType))],
+    ].filter(([, arr]) => arr.length);
+
+    const rows = [[HOTEL], [`Отчёт о проживании · ${period}`], []];
+    const bold = [0, 1];
+    let firstRow = true;
+    for (const [name, arr] of groups) {
+      rows.push([`${name} — ${arr.length} чел.`]); bold.push(rows.length - 1);
+      rows.push(head); bold.push(rows.length - 1);
+      arr.forEach((s, i) => rows.push(line(s, firstRow && i === 0)));
+      firstRow = false;
+      rows.push([]);
+    }
+    if (!groups.length) rows.push(head);
+
+    downloadXlsx(`MEDINA_${effFrom}_${effTo}.xlsx`, rows, { sheetName: 'Отчёт', boldRows: bold });
   }
 
   /* PDF собираем сами — получается обычный файл, который можно
@@ -460,6 +492,7 @@ function Requests({ list, onAdd }) {
                 <div style={{ fontWeight: 600 }}>{b.fio || `${b.people} чел.`}</div>
                 <div className="small">
                   {fmt(b.date)}
+                  {stayTypeLabel(b.stayType) ? ` · ${stayTypeLabel(b.stayType)}` : ''}
                   {b.destination ? ` · ${b.destination}` : ''}
                   {b.date < today && <span style={{ color: 'var(--warnd)' }}> · дата прошла</span>}
                 </div>
@@ -476,14 +509,17 @@ function RequestForm({ onClose, onSaved }) {
   const [fio, setFio] = useState('');
   const [dest, setDest] = useState('');
   const [date, setDate] = useState(todayStr());
+  const [stayType, setStayType] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function submit() {
     if (!fio.trim()) return alert('Укажите ФИО');
+    if (!stayType) return alert('Выберите категорию проживания: ИТР или Вахтовый');
     setBusy(true);
     try {
       const r = await api('addBooking', {
         date, people: 1, fio: fio.trim(), destination: dest.trim(), source: 'report',
+        stayType,
       });
       if (!r.ok) return alert(r.error || 'Ошибка');
       onSaved();
@@ -497,6 +533,16 @@ function RequestForm({ onClose, onSaved }) {
 
       <label>ФИО</label>
       <input value={fio} onChange={(e) => setFio(e.target.value)} placeholder="кого ждём" />
+
+      <label>Категория проживания</label>
+      <div className="seg">
+        {STAY_TYPES.map((t) => (
+          <button key={t} className={stayType === t ? 'on' : ''} onClick={() => setStayType(t)}>{t}</button>
+        ))}
+      </div>
+      <div className="seghint">
+        С этого начинается учёт: в отчёте ИТР и вахта идут отдельными списками.
+      </div>
 
       <label>Куда (объект / цех)</label>
       <input value={dest} onChange={(e) => setDest(e.target.value)} placeholder="например: ремонтный цех" />
