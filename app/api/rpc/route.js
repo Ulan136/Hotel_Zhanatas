@@ -111,7 +111,12 @@ const handlers = {
     return ok({ ok: true });
   },
   async login({ login, pass, remember = true }) {
-    const rows = await sql`SELECT name, login, pass_hash, role FROM users WHERE login = ${login}`;
+    /* Логин сравниваем без учёта регистра и лишних пробелов: телефон сам
+       ставит заглавную букву и иногда добавляет пробел в конце, и человек
+       получал «неверный логин или пароль», хотя всё вводил правильно. */
+    const l = String(login || '').trim();
+    const rows = await sql`SELECT name, login, pass_hash, role FROM users
+                            WHERE lower(login) = lower(${l})`;
     const u = rows[0];
     if (!u || !bcrypt.compareSync(String(pass || ''), u.pass_hash)) return fail('Неверный логин или пароль');
     const res = ok({ ok: true, user: { name: u.name, login: u.login, role: u.role } });
