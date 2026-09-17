@@ -187,40 +187,90 @@ export default function ReportPage() {
     return { rows: [[HOTEL], head, ...body], head };
   }
 
-  /* В Excel по нашему шаблону ИТР и вахта идут ДВУМЯ отдельными списками:
-     у каждого своя шапка и свой счёт людей. Сводные числа по гостинице
-     ставятся один раз — в первой строке первого списка, как в образце. */
+  /* Excel — строго по бланку завода: одна таблица, где вахтовики и ИТР
+     стоят РЯДОМ, каждый в своих колонках, а справа три пары цифр (в/а · ИТР).
+     Шапка двухэтажная, поэтому верхние заголовки объединяем по ячейкам. */
   function exportExcel() {
-    const { head } = buildReportRows();
-    const line = (s, withTotals) => [
-      s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival),
-      s.departure ? (s.departedAt ? fmtDateTime(s.departedAt) : fmt(s.departure)) : '',
-      s.fio,
-      s.position || '',
-      withTotals ? busyRooms.size : '',
-      withTotals ? freeRooms.length : '',
-      withTotals ? booked : '',
-    ];
+    const cat = (s2) => stayTypeLabel(s2.stayType);
+    const vah = list.filter((s2) => cat(s2) === 'Вахтовый');
+    const itr = list.filter((s2) => cat(s2) === 'ИТР');
+    const rest = list.filter((s2) => !cat(s2));
+    const when = (s2) => (s2.arrivedAt ? fmtDateTime(s2.arrivedAt) : fmt(s2.arrival));
 
-    const groups = [
-      ['ИТР', list.filter((s) => stayTypeLabel(s.stayType) === 'ИТР')],
-      ['Вахтовый', list.filter((s) => stayTypeLabel(s.stayType) === 'Вахтовый')],
-      ['Без категории', list.filter((s) => !stayTypeLabel(s.stayType))],
-    ].filter(([, arr]) => arr.length);
-
-    const rows = [[HOTEL], [`Отчёт о проживании · ${period}`], []];
-    const bold = [0, 1];
-    let firstRow = true;
-    for (const [name, arr] of groups) {
-      rows.push([`${name} — ${arr.length} чел.`]); bold.push(rows.length - 1);
-      rows.push(head); bold.push(rows.length - 1);
-      arr.forEach((s, i) => rows.push(line(s, firstRow && i === 0)));
-      firstRow = false;
-      rows.push([]);
+    /* Комната считается вахтовой или ИТР по тому, кто в ней живёт сейчас.
+       Свободные комнаты ни за кем не закреплены — они доступны обеим
+       категориям, поэтому одно и то же число стоит в обеих колонках. */
+    const roomCat = new Map();
+    for (const s2 of active) {
+      const c = cat(s2);
+      if (!c) continue;
+      const cur = roomCat.get(s2.room);
+      roomCat.set(s2.room, cur && cur !== c ? 'оба' : c);
     }
-    if (!groups.length) rows.push(head);
+    const busyVah = [...roomCat.values()].filter((c) => c === 'Вахтовый' || c === 'оба').length;
+    const busyItr = [...roomCat.values()].filter((c) => c === 'ИТР' || c === 'оба').length;
+    // Гости по заявке — теперь с категорией, её указывают уже при подаче заявки.
+    const wait = (bookings || []).filter((b) => b.status !== 'closed');
+    const cnt = (t) => wait.filter((b) => stayTypeLabel(b.stayType) === t)
+      .reduce((a, b) => a + (Number(b.people) || 1), 0);
+    const bookVah = cnt('Вахтовый');
+    const bookItr = cnt('ИТР');
 
-    downloadXlsx(`MEDINA_${effFrom}_${effTo}.xlsx`, rows, { sheetName: 'Отчёт', boldRows: bold });
+    const rows = [
+      [HOTEL],
+      [`Отчёт о проживании · ${period}`],
+      [],
+    ];
+    const head0 = rows.length;               // верхний этаж шапки
+    rows.push(['№', 'вахтовики', '', '', '', 'ИТР', '', '',
+      'количество занятых номеров', '', 'количество свободных номеров', '',
+      'количество гостей по заявке', '']);
+    rows.push(['', 'дата и время заселения', 'ФИО', 'должность', 'подразделение',
+      'дата и время заселения', 'ФИО', 'должность',
+      'в/а', 'ИТР', 'в/а', 'ИТР', 'в/а', 'ИТР']);
+
+    const firstData = rows.length;
+    const n = Math.max(vah.length, itr.length, 1);
+    for (let i = 0; i < n; i++) {
+      const v = vah[i]; const t = itr[i];
+      rows.push([
+        i + 1,
+        v ? when(v) : '', v ? v.fio : '', v ? (v.position || '') : '', v ? (v.destination || '') : '',
+        t ? when(t) : '', t ? t.fio : '', t ? (t.position || '') : '',
+        i === 0 ? busyVah : '', i === 0 ? busyItr : '',
+        i === 0 ? freeRooms.length : '', i === 0 ? freeRooms.length : '',
+        i === 0 ? bookVah : '', i === 0 ? bookItr : '',
+      ]);
+    }
+    const lastData = rows.length - 1;
+
+    // Записи без категории не теряем — выносим отдельным списком под таблицей.
+    const tail = [];
+    if (rest.length) {
+      rows.push([]);
+      tail.push(rows.length);
+      rows.push([`Без категории — ${rest.length} чел. (проставьте ИТР или Вахтовый в анкете)`]);
+      rest.forEach((s2, i) => rows.push([i + 1, when(s2), s2.fio, s2.position || '', s2.destination || '']));
+    }
+
+    const gridRows = [];
+    for (let r = firstData; r <= lastData; r++) gridRows.push(r);
+
+    downloadXlsx(`MEDINA_${effFrom}_${effTo}.xlsx`, rows, {
+      sheetName: 'Отчёт',
+      boldRows: [0, 1, ...tail],
+      headRows: [head0, head0 + 1],
+      gridRows,
+      merges: [
+        `A${head0 + 1}:A${head0 + 2}`,      // № — на два этажа
+        `B${head0 + 1}:E${head0 + 1}`,      // вахтовики
+        `F${head0 + 1}:H${head0 + 1}`,      // ИТР
+        `I${head0 + 1}:J${head0 + 1}`,      // занятых номеров
+        `K${head0 + 1}:L${head0 + 1}`,      // свободных номеров
+        `M${head0 + 1}:N${head0 + 1}`,      // гостей по заявке
+      ],
+      widths: [5, 19, 28, 20, 20, 19, 28, 20, 9, 9, 9, 9, 9, 9],
+    });
   }
 
   /* PDF собираем сами — получается обычный файл, который можно
