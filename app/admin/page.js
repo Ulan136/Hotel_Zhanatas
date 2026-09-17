@@ -283,7 +283,8 @@ function LoginForm({ onDone, setBusy }) {
     <div className="card">
       <h2>Вход</h2>
       <label>Логин</label>
-      <input value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="username" name="username" />
+      <input value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="username" name="username"
+        autoCapitalize="none" autoCorrect="off" spellCheck={false} />
       <label>Пароль</label>
       <input type="password" value={pass} onChange={(e) => setPass(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && submit()} autoComplete="current-password" name="password" />
