@@ -231,9 +231,17 @@ export default function ReportPage() {
       else { freeItr += n; freeVah += n; }   // блок пуст — место подойдёт обоим
     }
 
-    // Гости по заявке — теперь с категорией, её указывают уже при подаче заявки.
+    /* Гости по заявке считаются прямо из списка заявок — ничего отмечать
+       вручную не нужно. Категорию берём: 1) из самой заявки, 2) из анкеты,
+       если этот человек у нас уже жил, 3) иначе считаем вахтовым — основной
+       поток, и одно нажатие в списке заявок переключает на ИТР. */
+    const nm = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const nameCat = new Map();
+    for (const s2 of rows) { const c = cat(s2); if (c && s2.fio) nameCat.set(nm(s2.fio), c); }
+    const bookCat = (b) => stayTypeLabel(b.stayType) || nameCat.get(nm(b.fio)) || 'Вахтовый';
+
     const wait = (bookings || []).filter((b) => b.status !== 'closed');
-    const cnt = (t) => wait.filter((b) => stayTypeLabel(b.stayType) === t)
+    const cnt = (t) => wait.filter((b) => bookCat(b) === t)
       .reduce((a, b) => a + (Number(b.people) || 1), 0);
     const bookVah = cnt('Вахтовый');
     const bookItr = cnt('ИТР');
