@@ -596,20 +596,36 @@ function Requests({ list, onAdd, onReload }) {
    не попадает в колонки «количество гостей по заявке». */
 function BookingType({ b, onSaved }) {
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const cur = stayTypeLabel(b.stayType);
   async function set(t) {
-    if (busy || cur === t) return;
+    if (busy) return;
     setBusy(true);
     try {
       const r = await api('setBookingType', { id: b.id, stayType: t });
       if (!r.ok) return alert(r.error || 'Ошибка');
+      setOpen(false);
       await onSaved?.();
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
+  // Выбрано — показываем метку. Не выбрано — сразу видно, как заявка пойдёт в отчёт.
+  if (!open) {
+    return (
+      <div className="small" style={{ margin: '3px 0' }}>
+        {cur
+          ? <span className={'chip ' + (cur === 'ИТР' ? 'i' : 'a')}>{cur === 'ИТР' ? 'ИТР' : 'в/а'}</span>
+          : <span className="chip m">в/а · по умолчанию</span>}
+        {' '}<button className="link" onClick={() => setOpen(true)}>изменить</button>
+      </div>
+    );
+  }
   return (
-    <div className="seg seg-sm" style={{ margin: '4px 0' }}>
-      <button className={cur === 'ИТР' ? 'on' : ''} disabled={busy} onClick={() => set('ИТР')}>ИТР</button>
-      <button className={cur === 'Вахтовый' ? 'on' : ''} disabled={busy} onClick={() => set('Вахтовый')}>в/а</button>
+    <div style={{ margin: '3px 0' }}>
+      <div className="seg seg-sm">
+        <button className={cur === 'ИТР' ? 'on' : ''} disabled={busy} onClick={() => set('ИТР')}>ИТР</button>
+        <button className={cur === 'Вахтовый' ? 'on' : ''} disabled={busy} onClick={() => set('Вахтовый')}>в/а</button>
+      </div>
+      <button className="link" onClick={() => setOpen(false)}>отмена</button>
     </div>
   );
 }
