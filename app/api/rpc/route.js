@@ -225,9 +225,13 @@ const handlers = {
     return ok(rows.map((r) => ({ room: r.room, seats: Number(r.seats) || 1 })));
   },
   async publicStays() {
-    const rows = await sql`SELECT id, guest_id AS "guestId", fio, room, arrival::text AS arrival,
-                                  arrived_at AS "arrivedAt", status
-                             FROM stays WHERE status <> 'closed' ORDER BY room`;
+    /* Категория проживания (ИТР / вахтовый) лежит в анкете гостя — подтягиваем её,
+       чтобы охрана видела её прямо на плитке. Личных данных здесь по-прежнему нет. */
+    const rows = await sql`SELECT s.id, s.guest_id AS "guestId", s.fio, s.room, s.arrival::text AS arrival,
+                                  s.arrived_at AS "arrivedAt", s.status, s.slot,
+                                  COALESCE(g.stay_type, '') AS "stayType"
+                             FROM stays s LEFT JOIN guests g ON g.id = s.guest_id
+                            WHERE s.status <> 'closed' ORDER BY s.room, s.slot`;
     return ok(rows);
   },
   async addGuest({ fio, iin, docNo, birthYear, company, position, destination, citizenship, phone, stayType }) {
