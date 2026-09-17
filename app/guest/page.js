@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
-import { initials, fmt, todayStr, nowTime, nightsNow, fmtDateTime, toAstanaISO,
+import { STAY_TYPES, initials, fmt, todayStr, nowTime, nightsNow, fmtDateTime, toAstanaISO,
          CITIZENSHIPS, DEFAULT_COMPANY, POSITIONS,
          PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          BIRTH_PLACEHOLDER, formatBirth, birthToISO, birthInput,
@@ -90,6 +90,7 @@ function GuestForm({ init, title, onCancel, onDone }) {
   const [cit, setCit] = useState(init?.citizenship ? (known ? init.citizenship : 'Другое') : 'Казахстан');
   const [citOther, setCitOther] = useState(init?.citizenship && !known ? init.citizenship : '');
   const [phone, setPhone] = useState(init?.phone ? formatPhone(init.phone) : '+7 ');
+  const [stayType, setStayType] = useState(init?.stayType || '');
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -100,10 +101,11 @@ function GuestForm({ init, title, onCancel, onDone }) {
     const position = pos === 'Другое' ? posOther.trim() : pos;
     const bad = birthError(birth);
     if (bad) return alert(bad);
+    if (!stayType) return alert('Выберите категорию проживания: ИТР или Вахтовый');
     const payload = {
       fio: fio.trim(), iin: iin.trim(), docNo: docNo.trim(), birthYear: birth.trim() ? birthToISO(birth.trim()) : bornYearOnly,
       company: company.trim(), position, destination: destination.trim(),
-      citizenship, phone: cleanPhone(phone),
+      citizenship, phone: cleanPhone(phone), stayType,
     };
     setBusy(true);
     try {
@@ -134,6 +136,16 @@ function GuestForm({ init, title, onCancel, onDone }) {
         {bornYearOnly
           ? <>Раньше был указан только год — <b>{bornYearOnly}</b>. Впишите полную дату.</>
           : 'День, месяц, год — точки подставятся сами.'}
+      </div>
+
+      <label>Категория проживания</label>
+      <div className="seg">
+        {STAY_TYPES.map((t) => (
+          <button key={t} className={stayType === t ? 'on' : ''} onClick={() => setStayType(t)}>{t}</button>
+        ))}
+      </div>
+      <div className="small" style={{ marginTop: 4 }}>
+        ИТР — инженерно-технический работник. Вахтовый — рабочий на вахте.
       </div>
 
       <label>Компания / вахта</label>
@@ -223,7 +235,8 @@ export default function GuestPage() {
     }
     setGuest(g);
     // Нет ИИН или гражданства — сначала просим дозаполнить анкету.
-    if (!g.hasIin || !g.citizenship) { setFormInit(g); setScreen('in-form'); return; }
+    // Нет ИИН, гражданства или категории — просим дозаполнить анкету.
+    if (!g.hasIin || !g.citizenship || !g.stayType) { setFormInit(g); setScreen('in-form'); return; }
     goRooms();
   }
 
@@ -239,7 +252,7 @@ export default function GuestPage() {
         return alert(`${same.fio}, вы уже заселены — блок ${blockOf(active.room)}, комната №${active.room}.`);
       }
       setGuest(same);
-      if (!same.hasIin || !same.citizenship) {
+      if (!same.hasIin || !same.citizenship || !same.stayType) {
         setFormInit({ ...same, company: same.company || b.company, destination: same.destination || b.destination });
         setScreen('in-form');
         return;
