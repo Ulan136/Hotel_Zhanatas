@@ -465,13 +465,17 @@ function RoomModal({ room: rm, rooms, guests, onClose, onCheckout, onSaved, onAd
 
 function StayCard({ s, guest, rooms, onCheckout, onSaved }) {
   const [busyType, setBusyType] = useState(false);
+  /* Категория — это ДАННЫЕ ИЗ АНКЕТЫ, поэтому показываем её надписью.
+     Менять можно, но только осознанно: сначала «изменить», потом выбор.
+     Так случайное касание больше ничего не стирает. */
+  const [editType, setEditType] = useState(false);
 
-  // Категорию можно проставить прямо здесь — у тех, кто уже живёт.
   async function setStayType(t) {
     setBusyType(true);
     try {
       const r = await api('updateGuest', { id: guest.id, fio: guest.fio, stayType: t });
       if (!r.ok) return alert(r.error || 'Ошибка');
+      setEditType(false);
       await onSaved?.();
     } catch (e) { alert(e.message); } finally { setBusyType(false); }
   }
@@ -538,16 +542,25 @@ function StayCard({ s, guest, rooms, onCheckout, onSaved }) {
       {guest && (
         <>
           <label style={{ marginTop: 4 }}>Категория проживания</label>
-          <div className="seg">
-            {STAY_TYPES.map((t) => (
-              <button key={t} className={guest.stayType === t ? 'on' : ''} disabled={busyType}
-                onClick={() => setStayType(t)}>{t}</button>
-            ))}
-          </div>
-          {!guest.stayType && (
-            <div className="small" style={{ marginTop: 4, color: 'var(--warnd)' }}>
-              Не указана — выберите ИТР или Вахтовый, запишется сразу.
+          {!editType ? (
+            <div className="small">
+              {stayTypeLabel(guest.stayType)
+                ? <b style={{ color: 'var(--ink)', fontSize: 14 }}>{stayTypeLabel(guest.stayType)}</b>
+                : <b style={{ color: 'var(--warnd)', fontSize: 14 }}>не указана</b>}
+              {' — из анкеты гостя. '}
+              <button className="link" onClick={() => setEditType(true)}>изменить</button>
             </div>
+          ) : (
+            <>
+              <div className="seg">
+                {STAY_TYPES.map((t) => (
+                  <button key={t} className={guest.stayType === t ? 'on' : ''} disabled={busyType}
+                    onClick={() => setStayType(t)}>{t}</button>
+                ))}
+              </div>
+              <button className="link" style={{ display: 'block', marginTop: 6 }}
+                onClick={() => setEditType(false)}>отмена</button>
+            </>
           )}
         </>
       )}
@@ -712,20 +725,36 @@ function CheckinModal({ room, guests, rooms, onClose, onSaved, onReload }) {
    не попадает в колонки «количество гостей по заявке» в бланке завода. */
 function BookingType({ b, onSaved }) {
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const cur = stayTypeLabel(b.stayType);
   async function set(t) {
-    if (busy || cur === t) return;
+    if (busy) return;
     setBusy(true);
     try {
       const r = await api('setBookingType', { id: b.id, stayType: t });
       if (!r.ok) return alert(r.error || 'Ошибка');
+      setOpen(false);
       await onSaved?.();
     } catch (e) { alert(e.message); } finally { setBusy(false); }
   }
+  // Выбрано — показываем метку. Не выбрано — прямо говорим, как пойдёт в отчёт.
+  if (!open) {
+    return (
+      <div className="small" style={{ margin: '3px 0' }}>
+        {cur
+          ? <span className={'chip ' + (cur === 'ИТР' ? 'i' : 'a')}>{cur === 'ИТР' ? 'ИТР' : 'в/а'}</span>
+          : <span className="chip m">в/а · по умолчанию</span>}
+        {' '}<button className="link" onClick={() => setOpen(true)}>изменить</button>
+      </div>
+    );
+  }
   return (
-    <div className="seg seg-sm" style={{ margin: '4px 0' }}>
-      <button className={cur === 'ИТР' ? 'on' : ''} disabled={busy} onClick={() => set('ИТР')}>ИТР</button>
-      <button className={cur === 'Вахтовый' ? 'on' : ''} disabled={busy} onClick={() => set('Вахтовый')}>в/а</button>
+    <div style={{ margin: '3px 0' }}>
+      <div className="seg seg-sm">
+        <button className={cur === 'ИТР' ? 'on' : ''} disabled={busy} onClick={() => set('ИТР')}>ИТР</button>
+        <button className={cur === 'Вахтовый' ? 'on' : ''} disabled={busy} onClick={() => set('Вахтовый')}>в/а</button>
+      </div>
+      <button className="link" onClick={() => setOpen(false)}>отмена</button>
     </div>
   );
 }
