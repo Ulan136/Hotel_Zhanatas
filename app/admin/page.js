@@ -130,7 +130,7 @@ export default function AdminPage() {
               onDelShift={(id) => handleDelete('shift', id)}
               onReload={reload} />
           : <>
-              {tab === 'rooms' && <RoomsTab db={db} checkedAt={checkedAt}
+              {tab === 'rooms' && <RoomsTab db={db} checkedAt={checkedAt} onReload={reload}
                 onFree={(n) => setModal({ type: 'checkin', room: n })}
                 onOcc={(r) => setModal({ type: 'room', room: r })}
                 onBook={() => setModal({ type: 'booking' })}
@@ -303,7 +303,7 @@ function LoginForm({ onDone, setBusy }) {
 }
 
 /* ===================== Rooms ===================== */
-function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, checkedAt }) {
+function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, checkedAt, onReload }) {
   let occ = 0, free = 0, freeSeats = 0;
   db.rooms.forEach((r) => {
     const n = (r.stays || []).length;
@@ -349,7 +349,7 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
       <div className="small" style={{ marginTop: 2, marginBottom: 10 }}>
         Свободных мест всего: <b>{freeSeats}</b> — с учётом вторых мест в комнатах.
       </div>
-      <Bookings db={db} onBook={onBook} onDel={onDelBooking} onClose={onCloseBooking} />
+      <Bookings db={db} onBook={onBook} onDel={onDelBooking} onClose={onCloseBooking} onReload={onReload} />
 
       {groupByBlock(db.rooms, (r) => r.room).map(({ block, items, from, to }) => {
         const bfree = items.filter((r) => r.status === 'free' || r.status === 'part').length;
@@ -708,7 +708,29 @@ function CheckinModal({ room, guests, rooms, onClose, onSaved, onReload }) {
 /* ===================== Заявки на бронь =====================
    Бронируем не конкретные комнаты, а количество человек на дату:
    завод сообщает «приедет 5 человек», ресепшн держит места. */
-function Bookings({ db, onBook, onDel, onClose }) {
+/* Категория заявки одним касанием: ИТР или в/а (вахта). Без неё заявка
+   не попадает в колонки «количество гостей по заявке» в бланке завода. */
+function BookingType({ b, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const cur = stayTypeLabel(b.stayType);
+  async function set(t) {
+    if (busy || cur === t) return;
+    setBusy(true);
+    try {
+      const r = await api('setBookingType', { id: b.id, stayType: t });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      await onSaved?.();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="seg seg-sm" style={{ margin: '4px 0' }}>
+      <button className={cur === 'ИТР' ? 'on' : ''} disabled={busy} onClick={() => set('ИТР')}>ИТР</button>
+      <button className={cur === 'Вахтовый' ? 'on' : ''} disabled={busy} onClick={() => set('Вахтовый')}>в/а</button>
+    </div>
+  );
+}
+
+function Bookings({ db, onBook, onDel, onClose, onReload }) {
   const list = (db.bookings || []).filter((b) => b.status !== 'closed');
   const today = todayStr();
   const soon = list.filter((b) => b.date >= today);
@@ -732,16 +754,17 @@ function Bookings({ db, onBook, onDel, onClose }) {
           {list.map((b) => {
             const past = b.date < today;
             return (
-              <div key={b.id} className="list-item">
+              <div key={b.id} className="list-item" style={{ alignItems: 'flex-start' }}>
                 <div className="avatar" style={{ background: past ? 'var(--warn)' : 'var(--primary)' }}>{b.people}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600 }}>
                     {b.fio ? b.fio : `${b.people} чел.`}
                     {b.source === 'report' && <span className="small" style={{ color: 'var(--primd)' }}> · от заказчика</span>}
                   </div>
+                  {/* Сразу под ФИО — категория: нажали, и заявка попала в отчёт */}
+                  <BookingType b={b} onSaved={onReload} />
                   <div className="small">
                     {fmt(b.date)}
-                    {stayTypeLabel(b.stayType) ? ` · ${stayTypeLabel(b.stayType)}` : ''}
                     {b.destination ? ` · ${b.destination}` : ''}
                     {b.fio && b.people > 1 ? ` · ${b.people} чел.` : ''}
                     {[b.company, b.note].filter(Boolean).length ? ' · ' + [b.company, b.note].filter(Boolean).join(' · ') : ''}
