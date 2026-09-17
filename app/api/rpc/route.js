@@ -155,7 +155,7 @@ const handlers = {
   /* ---------- Общий срез (bootstrap) ---------- */
   async bootstrap() {
     const [guests, staff, categories, finance, shifts, stays, roomRows, payments, settingRows, bookings] = await Promise.all([
-      sql`SELECT id, fio, iin, doc_no AS "docNo", birth_year AS "birthYear", company, position, destination, citizenship, phone FROM guests ORDER BY fio`,
+      sql`SELECT id, fio, iin, doc_no AS "docNo", birth_year AS "birthYear", company, position, destination, citizenship, phone, stay_type AS "stayType" FROM guests ORDER BY fio`,
       sql`SELECT id, fio, role, phone FROM staff ORDER BY fio`,
       sql`SELECT id, name, ctype AS type, parent_id AS parent FROM categories ORDER BY id`,
       sql`SELECT id, ftype AS type, category, subcategory, amount::float8 AS amount, fdate::text AS date, note, pay_month AS "payMonth" FROM finance ORDER BY id`,
@@ -197,7 +197,7 @@ const handlers = {
 
   /* ---------- Гости ---------- */
   async guests() {
-    const rows = await sql`SELECT id, fio, iin, doc_no AS "docNo", birth_year AS "birthYear", company, position, destination, citizenship, phone FROM guests ORDER BY fio`;
+    const rows = await sql`SELECT id, fio, iin, doc_no AS "docNo", birth_year AS "birthYear", company, position, destination, citizenship, phone, stay_type AS "stayType" FROM guests ORDER BY fio`;
     return ok(rows);
   },
   /* Страница гостя открывается по QR без пароля, поэтому ей отдаём
@@ -205,6 +205,7 @@ const handlers = {
      признак «ИИН уже заполнен». Ни ИИН, ни паспорта, ни телефонов. */
   async publicGuests() {
     const rows = await sql`SELECT id, fio, company, position, destination, citizenship,
+                                  stay_type AS "stayType",
                                   (COALESCE(iin, '') <> '') AS "hasIin"
                              FROM guests ORDER BY fio`;
     return ok(rows);
@@ -229,19 +230,19 @@ const handlers = {
                              FROM stays WHERE status <> 'closed' ORDER BY room`;
     return ok(rows);
   },
-  async addGuest({ fio, iin, docNo, birthYear, company, position, destination, citizenship, phone }) {
+  async addGuest({ fio, iin, docNo, birthYear, company, position, destination, citizenship, phone, stayType }) {
     if (!fio) return fail('Укажите ФИО');
     if (!iin) return fail('Укажите ИИН');
     const rows = await sql`INSERT INTO guests
-        (fio, iin, doc_no, birth_year, company, position, destination, citizenship, phone)
+        (fio, iin, doc_no, birth_year, company, position, destination, citizenship, phone, stay_type)
       VALUES (${fio}, ${iin || ''}, ${docNo || ''}, ${String(birthYear || '')}, ${company || ''},
-              ${position || ''}, ${destination || ''}, ${citizenship || ''}, ${phone || ''})
+              ${position || ''}, ${destination || ''}, ${citizenship || ''}, ${phone || ''}, ${stayType || ''})
       RETURNING id`;
     return ok({ ok: true, id: rows[0].id });
   },
   /* Пустое поле означает «не меняем»: страница гостя больше не получает
      ИИН и телефон, и без этого правила они бы затирались при дозаполнении. */
-  async updateGuest({ id, fio, iin, docNo, birthYear, company, position, destination, citizenship, phone }) {
+  async updateGuest({ id, fio, iin, docNo, birthYear, company, position, destination, citizenship, phone, stayType }) {
     if (!fio) return fail('Укажите ФИО');
     const keep = (v) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v));
     await sql`UPDATE guests SET
@@ -253,7 +254,8 @@ const handlers = {
         position    = COALESCE(${keep(position)}, position),
         destination = COALESCE(${keep(destination)}, destination),
         citizenship = COALESCE(${keep(citizenship)}, citizenship),
-        phone       = COALESCE(${keep(phone)}, phone)
+        phone       = COALESCE(${keep(phone)}, phone),
+        stay_type   = COALESCE(${keep(stayType)}, stay_type)
       WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
