@@ -470,7 +470,7 @@ const handlers = {
     const [rows, roomRows, bookings] = await Promise.all([
       sql`SELECT s.id, s.fio, s.room, s.arrival::text AS arrival, s.departure::text AS departure,
                  s.arrived_at AS "arrivedAt", s.departed_at AS "departedAt",
-                 s.status, s.source,
+                 s.status, s.source, s.slot,
                  COALESCE(g.iin, '')         AS iin,
                  COALESCE(g.doc_no, '')      AS "docNo",
                  COALESCE(g.birth_year, '')  AS "birthYear",
