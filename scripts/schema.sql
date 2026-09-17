@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS rooms (
 -- Мест в комнате: 1 или 2. Второе место добавляет ресепшн — не у всех номеров две кровати.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS seats INT NOT NULL DEFAULT 1;
 
+-- Категория проживания: ИТР или Вахтовый (как в документах вахтовых гостиниц).
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS stay_type TEXT NOT NULL DEFAULT '';
+
 -- Заселения / брони
 CREATE TABLE IF NOT EXISTS stays (
   id          SERIAL PRIMARY KEY,
