@@ -43,7 +43,8 @@ const NEED = {
   shifts: 'reception', updateShift: 'reception', setShiftType: 'reception', deleteShift: 'reception',
   moveStay: 'reception', updateStay: 'reception', setRoomSeats: 'reception',
   updateBooking: 'reception', deleteBooking: 'reception',
-  setBookingType: 'factory',
+  // категорию у поданной заявки меняет только ресепшн и админ; заказчик только смотрит
+  setBookingType: 'reception',
 
   // администратор
   users: 'admin', addUser: 'admin', updateUser: 'admin', deleteUser: 'admin', setSetting: 'admin',
