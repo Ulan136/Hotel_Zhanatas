@@ -193,6 +193,8 @@ export default function ReportPage() {
      стоят РЯДОМ, каждый в своих колонках, а справа три пары цифр (в/а · ИТР).
      Шапка двухэтажная, поэтому верхние заголовки объединяем по ячейкам. */
   function exportExcel() {
+    const allStays = rows;           // все проживания: из них берём категории по ФИО
+    try {
     const cat = (s2) => stayTypeLabel(s2.stayType);
     const vah = list.filter((s2) => cat(s2) === 'Вахтовый');
     const itr = list.filter((s2) => cat(s2) === 'ИТР');
@@ -237,7 +239,7 @@ export default function ReportPage() {
        поток, и одно нажатие в списке заявок переключает на ИТР. */
     const nm = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
     const nameCat = new Map();
-    for (const s2 of rows) { const c = cat(s2); if (c && s2.fio) nameCat.set(nm(s2.fio), c); }
+    for (const s2 of allStays) { const c = cat(s2); if (c && s2.fio) nameCat.set(nm(s2.fio), c); }
     const bookCat = (b) => stayTypeLabel(b.stayType) || nameCat.get(nm(b.fio)) || 'Вахтовый';
 
     const wait = (bookings || []).filter((b) => b.status !== 'closed');
@@ -246,24 +248,24 @@ export default function ReportPage() {
     const bookVah = cnt('Вахтовый');
     const bookItr = cnt('ИТР');
 
-    const rows = [
+    const sheet = [
       [HOTEL],
       [`Отчёт о проживании · ${period}`],
       [],
     ];
-    const head0 = rows.length;               // верхний этаж шапки
-    rows.push(['№', 'вахтовики', '', '', '', 'ИТР', '', '',
+    const head0 = sheet.length;               // верхний этаж шапки
+    sheet.push(['№', 'вахтовики', '', '', '', 'ИТР', '', '',
       'количество занятых мест', '', 'количество свободных мест', '',
       'количество гостей по заявке', '']);
-    rows.push(['', 'дата и время заселения', 'ФИО', 'должность', 'подразделение',
+    sheet.push(['', 'дата и время заселения', 'ФИО', 'должность', 'подразделение',
       'дата и время заселения', 'ФИО', 'должность',
       'в/а', 'ИТР', 'в/а', 'ИТР', 'в/а', 'ИТР']);
 
-    const firstData = rows.length;
+    const firstData = sheet.length;
     const n = Math.max(vah.length, itr.length, 1);
     for (let i = 0; i < n; i++) {
       const v = vah[i]; const t = itr[i];
-      rows.push([
+      sheet.push([
         i + 1,
         v ? when(v) : '', v ? v.fio : '', v ? (v.position || '') : '', v ? (v.destination || '') : '',
         t ? when(t) : '', t ? t.fio : '', t ? (t.position || '') : '',
@@ -272,21 +274,21 @@ export default function ReportPage() {
         i === 0 ? bookVah : '', i === 0 ? bookItr : '',
       ]);
     }
-    const lastData = rows.length - 1;
+    const lastData = sheet.length - 1;
 
     // Записи без категории не теряем — выносим отдельным списком под таблицей.
     const tail = [];
     if (rest.length) {
-      rows.push([]);
-      tail.push(rows.length);
-      rows.push([`Без категории — ${rest.length} чел. (проставьте ИТР или Вахтовый в анкете)`]);
-      rest.forEach((s2, i) => rows.push([i + 1, when(s2), s2.fio, s2.position || '', s2.destination || '']));
+      sheet.push([]);
+      tail.push(sheet.length);
+      sheet.push([`Без категории — ${rest.length} чел. (проставьте ИТР или Вахтовый в анкете)`]);
+      rest.forEach((s2, i) => sheet.push([i + 1, when(s2), s2.fio, s2.position || '', s2.destination || '']));
     }
 
     const gridRows = [];
     for (let r = firstData; r <= lastData; r++) gridRows.push(r);
 
-    downloadXlsx(`MEDINA_${effFrom}_${effTo}.xlsx`, rows, {
+    downloadXlsx(`MEDINA_${effFrom}_${effTo}.xlsx`, sheet, {
       sheetName: 'Отчёт',
       boldRows: [0, 1, ...tail],
       headRows: [head0, head0 + 1],
@@ -301,6 +303,9 @@ export default function ReportPage() {
       ],
       widths: [5, 19, 28, 20, 20, 19, 28, 20, 9, 9, 9, 9, 9, 9],
     });
+    } catch (e) {
+      alert('Не удалось собрать файл: ' + (e?.message || e));
+    }
   }
 
   /* PDF собираем сами — получается обычный файл, который можно
