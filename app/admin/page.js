@@ -4,7 +4,7 @@ import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } 
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { useLive, liveLabel } from '@/lib/live';
 import { downloadXlsx } from '@/lib/xlsx';
-import { initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
+import { STAY_TYPES, initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
          fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          DEFAULT_GUARD_RATES, guardEarned, SHIFT_TYPES, defaultShiftType, shiftHours,
@@ -165,7 +165,7 @@ export default function AdminPage() {
       <Modal open={!!modal} onClose={closeModal}>
         {modal?.type === 'checkin' && <CheckinModal room={modal.room} guests={db.guests} rooms={db.rooms}
           onClose={closeModal} onSaved={() => afterSave()} onReload={reload} />}
-        {modal?.type === 'room' && <RoomModal room={modal.room} rooms={db.rooms} onClose={closeModal}
+        {modal?.type === 'room' && <RoomModal room={modal.room} rooms={db.rooms} guests={db.guests} onClose={closeModal}
           onAddGuest={(n) => setModal({ type: 'checkin', room: n })}
           onSaved={async () => { await reload(); closeModal(); }}
           onCheckout={async (id, departure, departedAt) => {
@@ -369,7 +369,7 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
 
 /* Карточка комнаты: список жильцов (их может быть двое), управление
    вторым местом и подселение. Ниже — карточка выбранного человека. */
-function RoomModal({ room: rm, rooms, onClose, onCheckout, onSaved, onAddGuest }) {
+function RoomModal({ room: rm, rooms, guests, onClose, onCheckout, onSaved, onAddGuest }) {
   const list = rm?.stays?.length ? rm.stays : (rm?.stay ? [rm.stay] : []);
   const seats = Number(rm?.seats) || 1;
   const [pick, setPick] = useState(0);
@@ -430,13 +430,26 @@ function RoomModal({ room: rm, rooms, onClose, onCheckout, onSaved, onAddGuest }
         )}
       </div>
 
-      <StayCard key={cur.id} s={cur} rooms={rooms} onCheckout={onCheckout} onSaved={onSaved} />
+      <StayCard key={cur.id} s={cur} guest={(guests || []).find((g) => String(g.id) === String(cur.guestId))}
+        rooms={rooms} onCheckout={onCheckout} onSaved={onSaved} />
       <button className="btn sec" onClick={onClose}>Закрыть</button>
     </>
   );
 }
 
-function StayCard({ s, rooms, onCheckout, onSaved }) {
+function StayCard({ s, guest, rooms, onCheckout, onSaved }) {
+  const [busyType, setBusyType] = useState(false);
+
+  // Категорию можно проставить прямо здесь — у тех, кто уже живёт.
+  async function setStayType(t) {
+    setBusyType(true);
+    try {
+      const r = await api('updateGuest', { id: guest.id, fio: guest.fio, stayType: t });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      await onSaved?.();
+    } catch (e) { alert(e.message); } finally { setBusyType(false); }
+  }
+
   // Дата выбытия: по умолчанию сегодня, но её можно изменить — для поздних выселений.
   const [departure, setDeparture] = useState(todayStr());
   const [depTime, setDepTime] = useState(nowTime());
@@ -495,6 +508,23 @@ function StayCard({ s, rooms, onCheckout, onSaved }) {
         <div style={{ flex: 1 }}><div style={{ fontWeight: 700 }}>{s.fio}</div><div className="small">{s.source || ''}</div></div>
         {s.status === 'booked' ? <span className="chip a">бронь</span> : <span className="chip g">на смене</span>}
       </div>
+
+      {guest && (
+        <>
+          <label style={{ marginTop: 4 }}>Категория проживания</label>
+          <div className="seg">
+            {STAY_TYPES.map((t) => (
+              <button key={t} className={guest.stayType === t ? 'on' : ''} disabled={busyType}
+                onClick={() => setStayType(t)}>{t}</button>
+            ))}
+          </div>
+          {!guest.stayType && (
+            <div className="small" style={{ marginTop: 4, color: 'var(--warnd)' }}>
+              Не указана — выберите ИТР или Вахтовый, запишется сразу.
+            </div>
+          )}
+        </>
+      )}
       <div className="tiles">
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="l" style={{ color: 'var(--incd)' }}>Прибытие</div><div className="v" style={{ fontSize: 13, color: 'var(--incd)' }}>{s.arrivedAt ? fmtDateTime(s.arrivedAt) : fmt(s.arrival)}</div></div>
         <div className="tile" style={{ background: 'var(--partbg)' }}><div className="l" style={{ color: 'var(--warnd)' }}>Суток</div><div className="v" style={{ fontSize: 16, color: 'var(--warnd)' }}>{nightsNow(s.arrival, departure)}</div></div>
@@ -1823,7 +1853,14 @@ function Settings({ db, seg, sess, users, setSeg, setModal, onDelete, backToApp 
             {db.guests.map((x) => {
               const inr = db.stays.find((s) => String(s.guestId) === String(x.id) && s.status !== 'closed');
               return <Row key={x.id} av={initials(x.fio)} title={x.fio}
-                sub={<>{[x.position, x.company, x.destination, birthToText(x.birthYear), x.iin && 'ИИН ' + x.iin, x.phone].filter(Boolean).join(' · ')}{inr ? <> · <b style={{ color: 'var(--incd)' }}>№{inr.room}</b></> : ''}</>}
+                sub={<>
+                  {x.stayType
+                    ? <b style={{ color: 'var(--primd)' }}>{x.stayType}</b>
+                    : <b style={{ color: 'var(--warnd)' }}>категория не указана</b>}
+                  {' · '}
+                  {[x.position, x.company, x.destination, birthToText(x.birthYear), x.iin && 'ИИН ' + x.iin, x.phone].filter(Boolean).join(' · ')}
+                  {inr ? <> · <b style={{ color: 'var(--incd)' }}>№{inr.room}</b></> : ''}
+                </>}
                 onEdit={() => setModal({ type: 'guest', data: x })}
                 onDel={() => onDelete('guest', x.id)} />;
             })}
@@ -1957,10 +1994,12 @@ function GuestModal({ guest, onClose, onSaved }) {
   const [cit, setCit] = useState(guest?.citizenship ? (known ? guest.citizenship : 'Другое') : 'Казахстан');
   const [citOther, setCitOther] = useState(guest?.citizenship && !known ? guest.citizenship : '');
   const [phone, setPhone] = useState(guest?.phone ? formatPhone(guest.phone) : '+7 ');
+  const [stayType, setStayType] = useState(guest?.stayType || '');
   const [busy, setBusy] = useState(false);
   async function submit() {
     if (!fio.trim()) return alert('Укажите ФИО');
     if (!iin.trim()) return alert('Укажите ИИН или номер паспорта');
+    if (!stayType) return alert('Выберите категорию проживания: ИТР или Вахтовый');
     const citizenship = cit === 'Другое' ? citOther.trim() : cit;
     if (!citizenship) return alert('Укажите гражданство');
     const position = pos === 'Другое' ? posOther.trim() : pos;
@@ -1969,7 +2008,7 @@ function GuestModal({ guest, onClose, onSaved }) {
     const payload = {
       fio: fio.trim(), iin: iin.trim(), docNo: docNo.trim(), birthYear: birth.trim() ? birthToISO(birth.trim()) : bornYearOnly,
       company: company.trim(), position, destination: destination.trim(),
-      citizenship, phone: cleanPhone(phone),
+      citizenship, phone: cleanPhone(phone), stayType,
     };
     setBusy(true);
     try {
@@ -1992,6 +2031,16 @@ function GuestModal({ guest, onClose, onSaved }) {
           ? <>Раньше был указан только год — <b>{bornYearOnly}</b>. Впишите полную дату.</>
           : 'День, месяц, год — точки подставятся сами.'}
       </div>
+      <label>Категория проживания</label>
+      <div className="seg">
+        {STAY_TYPES.map((t) => (
+          <button key={t} className={stayType === t ? 'on' : ''} onClick={() => setStayType(t)}>{t}</button>
+        ))}
+      </div>
+      <div className="small" style={{ marginTop: 4 }}>
+        ИТР — инженерно-технический работник, Вахтовый — рабочий на вахте.
+      </div>
+
       <label>Компания / вахта</label><input value={company} onChange={(e) => setCompany(e.target.value)} />
       <label>Должность</label>
       <select value={pos} onChange={(e) => setPos(e.target.value)}>
