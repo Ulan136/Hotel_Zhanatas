@@ -308,7 +308,8 @@ export default function ReportPage() {
             <div className="small">Только просмотр отчёта о проживании (вахтовый метод).</div>
             <label>Логин</label>
             <input value={login} onChange={(e) => setLogin(e.target.value)} placeholder="otchet"
-              autoComplete="username" name="username" />
+              autoComplete="username" name="username"
+              autoCapitalize="none" autoCorrect="off" spellCheck={false} />
             <label>Пароль</label>
             <input type="password" value={pass} onChange={(e) => setPass(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && doLogin()} placeholder="•••"
