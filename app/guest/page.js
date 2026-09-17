@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
-import { STAY_TYPES, initials, fmt, todayStr, nowTime, nightsNow, fmtDateTime, toAstanaISO,
+import { STAY_TYPES, stayTypeLabel, initials, fmt, todayStr, nowTime, nightsNow, fmtDateTime, toAstanaISO,
          CITIZENSHIPS, DEFAULT_COMPANY, POSITIONS,
          PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          BIRTH_PLACEHOLDER, formatBirth, birthToISO, birthInput,
@@ -253,14 +253,23 @@ export default function GuestPage() {
       }
       setGuest(same);
       if (!same.hasIin || !same.citizenship || !same.stayType) {
-        setFormInit({ ...same, company: same.company || b.company, destination: same.destination || b.destination });
+        setFormInit({
+          ...same,
+          company: same.company || b.company,
+          destination: same.destination || b.destination,
+          // Категорию заказчик уже указал в заявке — гостю не нужно вспоминать.
+          stayType: same.stayType || b.stayType || '',
+        });
         setScreen('in-form');
         return;
       }
       goRooms();
       return;
     }
-    setFormInit({ fio: b.fio, company: b.company || undefined, destination: b.destination || '' });
+    setFormInit({
+      fio: b.fio, company: b.company || undefined, destination: b.destination || '',
+      stayType: b.stayType || '',
+    });
     setScreen('in-form');
   }
 
@@ -349,7 +358,7 @@ export default function GuestPage() {
                       <div className="avatar">{initials(b.fio)}</div>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600 }}>{b.fio}</div>
-                        <div className="small">{[b.destination, b.company].filter(Boolean).join(' · ')}</div>
+                        <div className="small">{[stayTypeLabel(b.stayType), b.destination, b.company].filter(Boolean).join(' · ')}</div>
                       </div>
                       <span className="chip m">›</span>
                     </div>
