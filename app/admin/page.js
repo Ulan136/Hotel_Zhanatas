@@ -4,7 +4,7 @@ import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } 
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { useLive, liveLabel } from '@/lib/live';
 import { downloadXlsx } from '@/lib/xlsx';
-import { STAY_TYPES, stayTypeShort, initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
+import { STAY_TYPES, stayTypeShort, stayTypeLabel, initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
          fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          DEFAULT_GUARD_RATES, guardEarned, SHIFT_TYPES, defaultShiftType, shiftHours,
@@ -740,6 +740,7 @@ function Bookings({ db, onBook, onDel, onClose }) {
                   </div>
                   <div className="small">
                     {fmt(b.date)}
+                    {stayTypeLabel(b.stayType) ? ` · ${stayTypeLabel(b.stayType)}` : ''}
                     {b.destination ? ` · ${b.destination}` : ''}
                     {b.fio && b.people > 1 ? ` · ${b.people} чел.` : ''}
                     {[b.company, b.note].filter(Boolean).length ? ' · ' + [b.company, b.note].filter(Boolean).join(' · ') : ''}
@@ -765,17 +766,19 @@ function BookingModal({ onClose, onSaved }) {
   const [fio, setFio] = useState('');
   const [dest, setDest] = useState('');
   const [note, setNote] = useState('');
+  const [stayType, setStayType] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function submit() {
     const n = Number(people) || 0;
     if (!date) return alert('Укажите дату');
     if (!(n > 0)) return alert('Укажите количество человек');
+    if (!stayType) return alert('Выберите категорию проживания: ИТР или Вахтовый');
     setBusy(true);
     try {
       const r = await api('addBooking', {
         date, people: n, company: company.trim(), note: note.trim(),
-        fio: fio.trim(), destination: dest.trim(), source: 'admin',
+        fio: fio.trim(), destination: dest.trim(), source: 'admin', stayType,
       });
       if (!r.ok) return alert(r.error || 'Ошибка');
       onSaved();
@@ -796,6 +799,14 @@ function BookingModal({ onClose, onSaved }) {
           <button key={n} className="chipbtn" onClick={() => setPeople(String(n))}>{n}</button>
         ))}
       </div>
+      <label>Категория проживания</label>
+      <div className="seg">
+        {STAY_TYPES.map((t) => (
+          <button key={t} className={stayType === t ? 'on' : ''} onClick={() => setStayType(t)}>{t}</button>
+        ))}
+      </div>
+      <div className="seghint">Подставится в анкету гостя при заезде.</div>
+
       <label>Компания / вахта</label>
       <input value={company} onChange={(e) => setCompany(e.target.value)} />
       <label>ФИО (необязательно)</label>
