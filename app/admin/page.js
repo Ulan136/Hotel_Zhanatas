@@ -4,7 +4,7 @@ import { api, getSess, setSess as saveSess, clearSess, getLastLogin, forgetMe } 
 import { TopBar, Busy, Modal } from '@/components/kit';
 import { useLive, liveLabel } from '@/lib/live';
 import { downloadXlsx } from '@/lib/xlsx';
-import { STAY_TYPES, initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
+import { STAY_TYPES, stayTypeShort, initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
          fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          DEFAULT_GUARD_RATES, guardEarned, SHIFT_TYPES, defaultShiftType, shiftHours,
@@ -309,6 +309,18 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
     if (!n) free++; else occ++;
     freeSeats += Math.max(0, (Number(r.seats) || 1) - n);
   });
+
+  /* Категория проживания хранится в анкете гостя, а на плитке комнаты
+     мы видим только проживание. Связываем их по guestId. */
+  const typeOf = (s) => {
+    const g = db.guests.find((x) => String(x.id) === String(s.guestId));
+    return stayTypeShort(g?.stayType);
+  };
+  let nItr = 0, nVah = 0, nNon = 0;
+  db.rooms.forEach((r) => (r.stays || []).forEach((s) => {
+    const k = typeOf(s).key;
+    if (k === 'itr') nItr++; else if (k === 'vah') nVah++; else nNon++;
+  }));
   return (
     <div className="card">
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
@@ -328,7 +340,12 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
         <div className="tile" style={{ background: 'var(--fullbg)' }}><div className="v" style={{ color: 'var(--expd)' }}>{occ}</div><div className="l" style={{ color: 'var(--expd)' }}>занято</div></div>
         <div className="tile" style={{ background: 'var(--freebg)' }}><div className="v" style={{ color: 'var(--incd)' }}>{free}</div><div className="l" style={{ color: 'var(--incd)' }}>свободно</div></div>
       </div>
-      <div className="small" style={{ marginTop: -6, marginBottom: 10 }}>
+      {/* Сколько людей живёт и кто они по категории — сразу, без захода в анкеты. */}
+      <div className="small" style={{ marginTop: -6 }}>
+        Проживает: <b>{nItr + nVah + nNon}</b> чел. — <b>ИТР {nItr}</b> · <b>вахта {nVah}</b>
+        {nNon > 0 && <> · без категории {nNon}</>}
+      </div>
+      <div className="small" style={{ marginTop: 2, marginBottom: 10 }}>
         Свободных мест всего: <b>{freeSeats}</b> — с учётом вторых мест в комнатах.
       </div>
       <Bookings db={db} onBook={onBook} onDel={onDelBooking} onClose={onCloseBooking} />
@@ -352,7 +369,15 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
                     onClick={() => who.length ? onOcc(r) : onFree(r.room)}>
                     <div className="bar" /><div className="n">{r.room}</div>
                     {who.length
-                      ? who.map((x) => <div key={x.id} className="s">{shortName(x.fio)}</div>)
+                      ? who.map((x) => {
+                        const t = typeOf(x);
+                        return (
+                          <div key={x.id}>
+                            <div className={'ty ' + t.key}>{t.text}</div>
+                            <div className="s nm">{shortName(x.fio)}</div>
+                          </div>
+                        );
+                      })
                       : <div className="s">свободно</div>}
                     {/* Второе место занято не всегда — пишем об этом прямо на плитке. */}
                     {r.status === 'part' && <div className="s free2">+1 место</div>}
