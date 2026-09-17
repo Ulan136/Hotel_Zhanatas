@@ -436,7 +436,7 @@ export default function ReportPage() {
         </div>
 
         {/* --- Заявки на проживание от заказчика --- */}
-        <Requests list={bookings} onAdd={() => setReq(true)} onReload={render} />
+        <Requests list={bookings} onAdd={() => setReq(true)} />
 
         {/* --- Поиск и таблица --- */}
         <div className="card">
@@ -554,7 +554,7 @@ export default function ReportPage() {
    Заказчик сам сообщает, кого и куда ждёт. Это информация для ресепшна,
    а не бронь конкретной комнаты, поэтому поля необязательные и строгих
    проверок нет — кроме самого ФИО. */
-function Requests({ list, onAdd, onReload }) {
+function Requests({ list, onAdd }) {
   const today = todayStr();
   const rows = (list || []).filter((b) => b.status !== 'closed');
 
@@ -576,8 +576,14 @@ function Requests({ list, onAdd, onReload }) {
               <div className="avatar">{b.people > 1 ? b.people : '👤'}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600 }}>{b.fio || `${b.people} чел.`}</div>
-                {/* Категория прямо под именем: одно касание — и заявка попадает в счёт */}
-                <BookingType b={b} onSaved={onReload} />
+                {/* Категория — только для просмотра: менять может ресепшн и админ */}
+                <div className="small" style={{ margin: '3px 0' }}>
+                  {stayTypeLabel(b.stayType)
+                    ? <span className={'chip ' + (b.stayType === 'ИТР' ? 'i' : 'a')}>
+                        {b.stayType === 'ИТР' ? 'ИТР' : 'в/а'}
+                      </span>
+                    : <span className="chip m">в/а · по умолчанию</span>}
+                </div>
                 <div className="small">
                   {fmt(b.date)}
                   {b.destination ? ` · ${b.destination}` : ''}
@@ -588,44 +594,6 @@ function Requests({ list, onAdd, onReload }) {
           ))}
         </div>
       ) : <div className="small" style={{ marginTop: 8 }}>Активных заявок нет.</div>}
-    </div>
-  );
-}
-
-/* Переключатель категории у заявки: ИТР или в/а (вахта). Без него заявка
-   не попадает в колонки «количество гостей по заявке». */
-function BookingType({ b, onSaved }) {
-  const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
-  const cur = stayTypeLabel(b.stayType);
-  async function set(t) {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const r = await api('setBookingType', { id: b.id, stayType: t });
-      if (!r.ok) return alert(r.error || 'Ошибка');
-      setOpen(false);
-      await onSaved?.();
-    } catch (e) { alert(e.message); } finally { setBusy(false); }
-  }
-  // Выбрано — показываем метку. Не выбрано — сразу видно, как заявка пойдёт в отчёт.
-  if (!open) {
-    return (
-      <div className="small" style={{ margin: '3px 0' }}>
-        {cur
-          ? <span className={'chip ' + (cur === 'ИТР' ? 'i' : 'a')}>{cur === 'ИТР' ? 'ИТР' : 'в/а'}</span>
-          : <span className="chip m">в/а · по умолчанию</span>}
-        {' '}<button className="link" onClick={() => setOpen(true)}>изменить</button>
-      </div>
-    );
-  }
-  return (
-    <div style={{ margin: '3px 0' }}>
-      <div className="seg seg-sm">
-        <button className={cur === 'ИТР' ? 'on' : ''} disabled={busy} onClick={() => set('ИТР')}>ИТР</button>
-        <button className={cur === 'Вахтовый' ? 'on' : ''} disabled={busy} onClick={() => set('Вахтовый')}>в/а</button>
-      </div>
-      <button className="link" onClick={() => setOpen(false)}>отмена</button>
     </div>
   );
 }
