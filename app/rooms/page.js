@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
-import { shortName, groupByBlock, blockOf, fmt, timeHM } from '@/lib/ui';
+import { shortName, groupByBlock, blockOf, fmt, timeHM, stayTypeShort, stayTypeLabel } from '@/lib/ui';
 
 /* Экран «Кто в комнатах» — для охраны и вообще для быстрого взгляда.
    Только просмотр: ничего нажать и испортить нельзя. Личных данных
@@ -64,6 +64,13 @@ export default function RoomsPage() {
   const freeSeats = items.reduce((a, x) => a + Math.max(0, x.seats - x.who.length), 0);
   const people = stays.length;
 
+  // Кого сколько по категории проживания.
+  let nItr = 0, nVah = 0, nNon = 0;
+  for (const s of stays) {
+    const k = stayTypeShort(s.stayType).key;
+    if (k === 'itr') nItr++; else if (k === 'vah') nVah++; else nNon++;
+  }
+
   // Поиск: по имени гостя или номеру комнаты.
   const qq = norm(q);
   const found = qq
@@ -100,6 +107,10 @@ export default function RoomsPage() {
             </div>
           </div>
           <div className="small" style={{ marginTop: 6 }}>
+            Из них <b>ИТР {nItr}</b> · <b>вахта {nVah}</b>
+            {nNon > 0 && <> · без категории {nNon}</>}
+          </div>
+          <div className="small" style={{ marginTop: 2 }}>
             Свободных мест всего: <b>{freeSeats}</b> — с учётом вторых мест в комнатах.
           </div>
 
@@ -139,7 +150,15 @@ export default function RoomsPage() {
                     <div className="bar" />
                     <div className="n">{r.room}</div>
                     {r.who.length
-                      ? r.who.map((x) => <div key={x.id} className="s">{shortName(x.fio)}</div>)
+                      ? r.who.map((x) => {
+                        const t = stayTypeShort(x.stayType);
+                        return (
+                          <div key={x.id}>
+                            <div className={'ty ' + t.key}>{t.text}</div>
+                            <div className="s nm">{shortName(x.fio)}</div>
+                          </div>
+                        );
+                      })
                       : <div className="s">свободно</div>}
                     {r.status === 'part' && <div className="s free2">+1 место</div>}
                   </div>
@@ -156,7 +175,7 @@ export default function RoomsPage() {
           <div className="small" style={{ marginBottom: 8 }}>Всего проживает: <b>{people}</b>.</div>
           <div style={{ overflow: 'auto' }}>
             <table><tbody>
-              <tr><th>Комн.</th><th>Блок</th><th>Гость</th><th>С какого</th></tr>
+              <tr><th>Комн.</th><th>Блок</th><th>Гость</th><th>Категория</th><th>С какого</th></tr>
               {stays.slice().sort((a, b) => Number(a.room) - Number(b.room) || (a.slot || 1) - (b.slot || 1))
                 .filter((s) => !qq || String(s.room).includes(qq) || norm(s.fio).includes(qq))
                 .map((s) => (
@@ -164,10 +183,11 @@ export default function RoomsPage() {
                     <td style={{ fontWeight: 700 }}>{s.room}</td>
                     <td>{blockOf(s.room)}</td>
                     <td>{s.fio}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{stayTypeLabel(s.stayType) || '—'}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>{fmt(s.arrival)}</td>
                   </tr>
                 ))}
-              {!stays.length && <tr><td colSpan={4} className="small">Сейчас никто не проживает.</td></tr>}
+              {!stays.length && <tr><td colSpan={5} className="small">Сейчас никто не проживает.</td></tr>}
             </tbody></table>
           </div>
         </div>
