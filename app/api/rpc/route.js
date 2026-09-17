@@ -43,6 +43,7 @@ const NEED = {
   shifts: 'reception', updateShift: 'reception', setShiftType: 'reception', deleteShift: 'reception',
   moveStay: 'reception', updateStay: 'reception', setRoomSeats: 'reception',
   updateBooking: 'reception', deleteBooking: 'reception',
+  setBookingType: 'factory',
 
   // администратор
   users: 'admin', addUser: 'admin', updateUser: 'admin', deleteUser: 'admin', setSetting: 'admin',
@@ -484,13 +485,18 @@ const handlers = {
             LEFT JOIN guests g ON g.id = s.guest_id
            -- Хронологически: кто заехал раньше — выше, новые записи внизу.
            ORDER BY s.arrival ASC, s.id ASC`,
-      sql`SELECT room FROM rooms ORDER BY room`,
+      sql`SELECT room, seats FROM rooms ORDER BY room`,
       sql`SELECT id, bdate::text AS date, people, company, note, status,
                    fio, destination, source, COALESCE(stay_type, '') AS "stayType"
             FROM bookings WHERE status = 'new' ORDER BY bdate`,
     ]);
     const booked = bookings.reduce((a, b) => a + (+b.people || 0), 0);
-    return ok({ rows, rooms: roomRows.map((r) => r.room), bookings, booked });
+    /* Комнаты отдаём и списком номеров (как было), и с числом мест —
+       в бланке завода считаются места, а не комнаты. */
+    return ok({
+      rows, rooms: roomRows.map((r) => r.room), bookings, booked,
+      seats: roomRows.map((r) => ({ room: Number(r.room), seats: Number(r.seats) || 1 })),
+    });
   },
 
   /* ---------- Пульс ----------
@@ -601,6 +607,13 @@ const handlers = {
                                   fio = ${fio || ''}, destination = ${destination || ''},
                                   stay_type = ${ty}
               WHERE id = ${Number(id)}`;
+    return ok({ ok: true });
+  },
+  /* Быстрая отметка категории у уже поданной заявки: заказчик или ресепшн
+     одним касанием ставит ИТР или в/а, ничего больше не трогая. */
+  async setBookingType({ id, stayType }) {
+    const ty = STAY_TYPES.includes(String(stayType || '').trim()) ? String(stayType).trim() : '';
+    await sql`UPDATE bookings SET stay_type = ${ty} WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
   async deleteBooking({ id }) {
