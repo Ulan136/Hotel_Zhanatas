@@ -174,6 +174,8 @@ CREATE TABLE IF NOT EXISTS bookings (
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS fio TEXT DEFAULT '';
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS destination TEXT DEFAULT '';
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS source TEXT DEFAULT '';
+-- Категория проживания (ИТР / Вахтовый) указывается уже в заявке.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS stay_type TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS bookings_date_idx ON bookings (bdate);
 
