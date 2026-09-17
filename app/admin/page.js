@@ -135,6 +135,7 @@ export default function AdminPage() {
                 onOcc={(r) => setModal({ type: 'room', room: r })}
                 onBook={() => setModal({ type: 'booking' })}
                 onDelBooking={(id) => handleDelete('booking', id)}
+                onEditBooking={(b) => setModal({ type: 'booking', data: b })}
                 onCloseBooking={async (b) => {
                   if (!confirm(`Закрыть заявку на ${b.people} чел. от ${fmt(b.date)}?`)) return;
                   await withBusy(() => api('updateBooking', { ...b, status: 'closed' }));
@@ -179,7 +180,7 @@ export default function AdminPage() {
         {modal?.type === 'payEdit' && <PayEditModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'finEdit' && <FinEditModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'shiftEdit' && <ShiftEditModal row={modal.data} db={db} onClose={closeModal} onSaved={() => afterSave()} />}
-        {modal?.type === 'booking' && <BookingModal onClose={closeModal} onSaved={() => afterSave()} />}
+        {modal?.type === 'booking' && <BookingModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'guest' && <GuestModal guest={modal.data} onClose={closeModal} onSaved={() => afterSave('guests')} />}
         {modal?.type === 'staff' && <StaffModal worker={modal.data} onClose={closeModal} onSaved={() => afterSave('staff')} />}
         {modal?.type === 'cat' && <CatModal cat={modal.data} parentId={modal.parentId} ctype={modal.ctype} onClose={closeModal} onSaved={() => afterSave('cats')} />}
@@ -190,34 +191,41 @@ export default function AdminPage() {
     </div>
   );
 
+  /* Удаление необратимо, поэтому спрашиваем ДВА раза: сначала что именно
+     удаляем, потом ещё раз — на случай, если нажали не глядя. */
+  function confirmDelete(what, note) {
+    if (!confirm('Удалить ' + what + '?' + (note ? '\n\n' + note : ''))) return false;
+    return confirm('Точно удалить ' + what + '?\n\nВернуть эту запись будет нельзя.');
+  }
+
   async function handleDelete(kind, arg) {
     if (kind === 'guest') {
       const g = db.guests.find((x) => x.id === arg);
       const inr = db.stays.find((s) => String(s.guestId) === String(arg) && s.status !== 'closed');
       if (inr) return alert('Нельзя удалить: гость заселён (комната №' + inr.room + '). Сначала отметьте выбытие.');
-      if (!confirm('Удалить гостя?')) return;
+      if (!confirmDelete('гостя «' + (g?.fio || '') + '»', 'Вместе с ним пропадёт его анкета.')) return;
       await withBusy(() => api('deleteGuest', { id: arg })); await reload();
     } else if (kind === 'staff') {
-      if (!confirm('Удалить работника?')) return;
+      if (!confirmDelete('работника')) return;
       await withBusy(() => api('deleteStaff', { id: arg })); await reload();
     } else if (kind === 'cat') {
-      if (!confirm('Удалить категорию?')) return;
+      if (!confirmDelete('категорию')) return;
       await withBusy(() => api('deleteCategory', { id: arg })); await reload();
     } else if (kind === 'booking') {
-      if (!confirm('Удалить заявку на бронь?')) return;
+      if (!confirmDelete('заявку на бронь')) return;
       await withBusy(() => api('deleteBooking', { id: arg })); await reload();
     } else if (kind === 'shift') {
-      if (!confirm('Удалить эту смену из журнала? Начисление пересчитается.')) return;
+      if (!confirmDelete('эту смену из журнала', 'Начисление пересчитается.')) return;
       await withBusy(() => api('deleteShift', { id: arg })); await reload();
     } else if (kind === 'finance') {
-      if (!confirm('Удалить эту операцию из журнала? Суммы пересчитаются.')) return;
+      if (!confirmDelete('эту операцию из журнала', 'Суммы пересчитаются.')) return;
       await withBusy(() => api('deleteFinance', { id: arg })); await reload();
     } else if (kind === 'payment') {
-      if (!confirm('Удалить эту выплату? Долг пересчитается.')) return;
+      if (!confirmDelete('эту выплату', 'Долг пересчитается.')) return;
       await withBusy(() => api('deletePayment', { id: arg })); await reload();
     } else if (kind === 'user') {
       if (arg === sess.login) return alert('Нельзя удалить пользователя, под которым вы вошли.');
-      if (!confirm('Удалить пользователя «' + arg + '»?')) return;
+      if (!confirmDelete('пользователя «' + arg + '»', 'Он больше не сможет войти.')) return;
       await withBusy(() => api('deleteUser', { login: arg })); await loadUsers();
     }
   }
@@ -303,7 +311,7 @@ function LoginForm({ onDone, setBusy }) {
 }
 
 /* ===================== Rooms ===================== */
-function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, checkedAt, onReload }) {
+function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, onEditBooking, checkedAt, onReload }) {
   let occ = 0, free = 0, freeSeats = 0;
   db.rooms.forEach((r) => {
     const n = (r.stays || []).length;
@@ -349,7 +357,8 @@ function RoomsTab({ db, onFree, onOcc, onBook, onDelBooking, onCloseBooking, che
       <div className="small" style={{ marginTop: 2, marginBottom: 10 }}>
         Свободных мест всего: <b>{freeSeats}</b> — с учётом вторых мест в комнатах.
       </div>
-      <Bookings db={db} onBook={onBook} onDel={onDelBooking} onClose={onCloseBooking} onReload={onReload} />
+      <Bookings db={db} onBook={onBook} onDel={onDelBooking} onClose={onCloseBooking}
+        onEdit={onEditBooking} onReload={onReload} />
 
       {groupByBlock(db.rooms, (r) => r.room).map(({ block, items, from, to }) => {
         const bfree = items.filter((r) => r.status === 'free' || r.status === 'part').length;
@@ -759,7 +768,7 @@ function BookingType({ b, onSaved }) {
   );
 }
 
-function Bookings({ db, onBook, onDel, onClose, onReload }) {
+function Bookings({ db, onBook, onDel, onClose, onEdit, onReload }) {
   const list = (db.bookings || []).filter((b) => b.status !== 'closed');
   const today = todayStr();
   const soon = list.filter((b) => b.date >= today);
@@ -800,9 +809,13 @@ function Bookings({ db, onBook, onDel, onClose, onReload }) {
                     {past && <span style={{ color: 'var(--warnd)' }}> · дата прошла</span>}
                   </div>
                 </div>
-                <button className="link" onClick={() => onClose(b)}>закрыть</button>
-                &nbsp;&nbsp;
-                <button className="link" style={{ color: 'var(--full)' }} onClick={() => onDel(b.id)}>удал.</button>
+                <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <button className="link" onClick={() => onEdit(b)}>измен.</button>
+                  <br />
+                  <button className="link" onClick={() => onClose(b)}>закрыть</button>
+                  <br />
+                  <button className="link" style={{ color: 'var(--full)' }} onClick={() => onDel(b.id)}>удал.</button>
+                </div>
               </div>
             );
           })}
@@ -812,14 +825,16 @@ function Bookings({ db, onBook, onDel, onClose, onReload }) {
   );
 }
 
-function BookingModal({ onClose, onSaved }) {
-  const [date, setDate] = useState(todayStr());
-  const [people, setPeople] = useState('1');
-  const [company, setCompany] = useState(DEFAULT_COMPANY);
-  const [fio, setFio] = useState('');
-  const [dest, setDest] = useState('');
-  const [note, setNote] = useState('');
-  const [stayType, setStayType] = useState('');
+/* Одна и та же форма и для новой заявки, и для правки уже поданной:
+   передали row — редактируем её, не передали — создаём новую. */
+function BookingModal({ row, onClose, onSaved }) {
+  const [date, setDate] = useState(row?.date ? String(row.date).slice(0, 10) : todayStr());
+  const [people, setPeople] = useState(String(row?.people || 1));
+  const [company, setCompany] = useState(row ? (row.company || '') : DEFAULT_COMPANY);
+  const [fio, setFio] = useState(row?.fio || '');
+  const [dest, setDest] = useState(row?.destination || '');
+  const [note, setNote] = useState(row?.note || '');
+  const [stayType, setStayType] = useState(stayTypeLabel(row?.stayType) || '');
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -829,10 +844,13 @@ function BookingModal({ onClose, onSaved }) {
     if (!stayType) return alert('Выберите категорию проживания: ИТР или Вахтовый');
     setBusy(true);
     try {
-      const r = await api('addBooking', {
+      const payload = {
         date, people: n, company: company.trim(), note: note.trim(),
-        fio: fio.trim(), destination: dest.trim(), source: 'admin', stayType,
-      });
+        fio: fio.trim(), destination: dest.trim(), stayType,
+      };
+      const r = row
+        ? await api('updateBooking', { ...payload, id: row.id, status: row.status || 'new' })
+        : await api('addBooking', { ...payload, source: 'admin' });
       if (!r.ok) return alert(r.error || 'Ошибка');
       onSaved();
     } catch (e) { alert(e.message); } finally { setBusy(false); }
@@ -840,7 +858,7 @@ function BookingModal({ onClose, onSaved }) {
 
   return (
     <>
-      <h2>Заявка на бронь</h2>
+      <h2>{row ? 'Изменить заявку' : 'Заявка на бронь'}</h2>
       <div className="small">Сколько человек ждём и на какую дату. Комнаты выберутся при заезде.</div>
       <label>Дата заезда</label>
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
