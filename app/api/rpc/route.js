@@ -3,6 +3,9 @@ import bcrypt from 'bcryptjs';
 import { sql } from '@/lib/db';
 import { AUTH_COOKIE, signToken, verifyToken, atLeast } from '@/lib/auth';
 
+// Категории проживания перечислены в одном месте — здесь и на страницах.
+const STAY_TYPES = ['ИТР', 'Вахтовый'];
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -168,7 +171,7 @@ const handlers = {
           FROM payments ORDER BY pdate DESC, id DESC`,
       sql`SELECT skey, svalue FROM settings`,
       sql`SELECT id, bdate::text AS date, people, company, note, status,
-                 fio, destination, source
+                 fio, destination, source, COALESCE(stay_type, '') AS "stayType"
           FROM bookings ORDER BY bdate DESC, id DESC`,
     ]);
 
@@ -213,7 +216,8 @@ const handlers = {
   /* Кого ждут по заявкам заказчика. Открыто без пароля — этот список
      видит гость на своём телефоне, поэтому только имя, компания и объект. */
   async publicBookings() {
-    const rows = await sql`SELECT id, fio, company, destination, bdate::text AS date
+    const rows = await sql`SELECT id, fio, company, destination, bdate::text AS date,
+                                  COALESCE(stay_type, '') AS "stayType"
                              FROM bookings
                             WHERE status = 'new' AND COALESCE(fio, '') <> ''
                             ORDER BY bdate, id`;
@@ -362,6 +366,16 @@ const handlers = {
     }
     // Пришёл по заявке — снимаем её из ожидания, чтобы ресепшн не ждал дважды.
     if (bookingId) {
+      /* Категория с заявки переносится в анкету, если там её ещё нет:
+         заказчик указал её заранее, гостю переспрашивать незачем. */
+      if (guestId) {
+        await sql`UPDATE guests SET stay_type = b.stay_type
+                    FROM bookings b
+                   WHERE b.id = ${Number(bookingId)}
+                     AND guests.id = ${Number(guestId)}
+                     AND COALESCE(guests.stay_type, '') = ''
+                     AND COALESCE(b.stay_type, '') <> ''`;
+      }
       await sql`UPDATE bookings SET status = 'closed' WHERE id = ${Number(bookingId)} AND status = 'new'`;
     }
     return ok({ ok: true });
@@ -459,14 +473,15 @@ const handlers = {
                  COALESCE(g.position, '')    AS position,
                  COALESCE(g.destination, '') AS destination,
                  COALESCE(g.citizenship, '') AS citizenship,
-                 COALESCE(g.phone, '')       AS phone
+                 COALESCE(g.phone, '')       AS phone,
+                 COALESCE(g.stay_type, '')   AS "stayType"
             FROM stays s
             LEFT JOIN guests g ON g.id = s.guest_id
            -- Хронологически: кто заехал раньше — выше, новые записи внизу.
            ORDER BY s.arrival ASC, s.id ASC`,
       sql`SELECT room FROM rooms ORDER BY room`,
       sql`SELECT id, bdate::text AS date, people, company, note, status,
-                   fio, destination, source
+                   fio, destination, source, COALESCE(stay_type, '') AS "stayType"
             FROM bookings WHERE status = 'new' ORDER BY bdate`,
     ]);
     const booked = bookings.reduce((a, b) => a + (+b.people || 0), 0);
@@ -553,27 +568,33 @@ const handlers = {
   /* ---------- Заявки на бронь (числом человек, без привязки к комнатам) ---------- */
   async bookings() {
     const rows = await sql`SELECT id, bdate::text AS date, people, company, note, status,
-                                  fio, destination, source, created_at AS "createdAt"
+                                  fio, destination, source, created_at AS "createdAt",
+                                  COALESCE(stay_type, '') AS "stayType"
                            FROM bookings ORDER BY bdate DESC, id DESC`;
     return ok(rows);
   },
-  async addBooking({ date, people, company, note, fio, destination, source }) {
+  async addBooking({ date, people, company, note, fio, destination, source, stayType }) {
     const n = Math.round(Number(people) || 0) || 1;
     if (!date) return fail('Укажите дату');
     if (!(n > 0)) return fail('Укажите количество человек');
-    const rows = await sql`INSERT INTO bookings (bdate, people, company, note, fio, destination, source)
+    /* Категория проживания идёт с заявки: с неё начинается путь гостя,
+       и при заезде она уже подставлена в анкету. */
+    const st = STAY_TYPES.includes(String(stayType || '').trim()) ? String(stayType).trim() : '';
+    const rows = await sql`INSERT INTO bookings (bdate, people, company, note, fio, destination, source, stay_type)
                            VALUES (${date}, ${n}, ${company || ''}, ${note || ''},
-                                   ${fio || ''}, ${destination || ''}, ${source || 'admin'})
+                                   ${fio || ''}, ${destination || ''}, ${source || 'admin'}, ${st})
                            RETURNING id`;
     return ok({ ok: true, id: rows[0].id });
   },
-  async updateBooking({ id, date, people, company, note, status, fio, destination }) {
+  async updateBooking({ id, date, people, company, note, status, fio, destination, stayType }) {
     const n = Math.round(Number(people) || 0);
     if (!(n > 0)) return fail('Укажите количество человек');
     const st = status === 'closed' ? 'closed' : 'new';
+    const ty = STAY_TYPES.includes(String(stayType || '').trim()) ? String(stayType).trim() : '';
     await sql`UPDATE bookings SET bdate = ${date}, people = ${n}, company = ${company || ''},
                                   note = ${note || ''}, status = ${st},
-                                  fio = ${fio || ''}, destination = ${destination || ''}
+                                  fio = ${fio || ''}, destination = ${destination || ''},
+                                  stay_type = ${ty}
               WHERE id = ${Number(id)}`;
     return ok({ ok: true });
   },
