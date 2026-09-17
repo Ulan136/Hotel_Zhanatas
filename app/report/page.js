@@ -200,23 +200,27 @@ export default function ReportPage() {
     /* Категория комнаты видна по тому, кто в ней живёт. Свободная комната
        берёт категорию своего блока: на деле блок 1 занят ИТР, блок 2 — вахтой,
        и отдельно закреплять комнаты не нужно — система видит это сама. */
-    const roomCat = new Map();
+    /* Комната считается ОДИН раз, по первому месту: если в одной комнате
+       живут вахтовик и ИТР, иначе сумма двух колонок была бы больше, чем
+       всего занятых комнат. */
+    const firstSlot = new Map();
     for (const s2 of active) {
       const c = cat(s2);
       if (!c) continue;
-      const cur = roomCat.get(s2.room);
-      roomCat.set(s2.room, cur && cur !== c ? 'оба' : c);
+      const cur = firstSlot.get(s2.room);
+      if (!cur || (Number(s2.slot) || 1) < cur.slot) firstSlot.set(s2.room, { slot: Number(s2.slot) || 1, c });
     }
-    const busyVah = [...roomCat.values()].filter((c) => c === 'Вахтовый' || c === 'оба').length;
-    const busyItr = [...roomCat.values()].filter((c) => c === 'ИТР' || c === 'оба').length;
+    const roomCat = new Map([...firstSlot].map(([room, v]) => [room, v.c]));
+    const busyVah = [...roomCat.values()].filter((c) => c === 'Вахтовый').length;
+    const busyItr = [...roomCat.values()].filter((c) => c === 'ИТР').length;
 
     // Чья это половина гостиницы — считаем по жильцам блока.
     const perBlock = new Map();
     for (const [room, c] of roomCat) {
       const b = blockOf(room);
       const t = perBlock.get(b) || { itr: 0, vah: 0 };
-      if (c === 'ИТР' || c === 'оба') t.itr++;
-      if (c === 'Вахтовый' || c === 'оба') t.vah++;
+      if (c === 'ИТР') t.itr++;
+      if (c === 'Вахтовый') t.vah++;
       perBlock.set(b, t);
     }
     let freeVah = 0, freeItr = 0;
