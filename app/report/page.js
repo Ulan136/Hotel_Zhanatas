@@ -45,6 +45,7 @@ export default function ReportPage() {
   const [useDates, setUseDates] = useState(false);
   const [booked, setBooked] = useState(0);
   const [bookings, setBookings] = useState([]);
+  const [seats, setSeats] = useState([]);   // сколько мест в каждой комнате
   const [req, setReq] = useState(false);       // открыта форма заявки
   useEffect(() => {
     const s = getSess(SK);
@@ -79,7 +80,8 @@ export default function ReportPage() {
       setShowRooms(cfg?.report_show_rooms === '1');
       setBooked(Number(d?.booked) || 0);
       setBookings(Array.isArray(d?.bookings) ? d.bookings : []);
-    } catch { setRows([]); setRooms([]); setBookings([]); } finally { setBusy(false); }
+      setSeats(Array.isArray(d?.seats) ? d.seats : []);
+    } catch { setRows([]); setRooms([]); setBookings([]); setSeats([]); } finally { setBusy(false); }
   }
 
   // Отчёт тоже освежается сам, пока вкладка открыта.
@@ -200,36 +202,35 @@ export default function ReportPage() {
     /* Категория комнаты видна по тому, кто в ней живёт. Свободная комната
        берёт категорию своего блока: на деле блок 1 занят ИТР, блок 2 — вахтой,
        и отдельно закреплять комнаты не нужно — система видит это сама. */
-    /* Комната считается ОДИН раз, по первому месту: если в одной комнате
-       живут вахтовик и ИТР, иначе сумма двух колонок была бы больше, чем
-       всего занятых комнат. */
-    const firstSlot = new Map();
+    /* В бланке считаются МЕСТА, а не комнаты: в одной комнате может жить
+       двое, и по комнатам цифры не сходились. Место занято тем, кто в нём
+       живёт, — категория берётся прямо из его анкеты. */
+    const occVah = active.filter((s2) => cat(s2) === 'Вахтовый').length;
+    const occItr = active.filter((s2) => cat(s2) === 'ИТР').length;
+
+    /* Свободное место относим к своему блоку: блок 1 занят ИТР, блок 2 —
+       вахтой, система видит это по жильцам и закреплять ничего не нужно. */
+    const perBlock = new Map();
+    const inRoom = new Map();
     for (const s2 of active) {
+      inRoom.set(s2.room, (inRoom.get(s2.room) || 0) + 1);
       const c = cat(s2);
       if (!c) continue;
-      const cur = firstSlot.get(s2.room);
-      if (!cur || (Number(s2.slot) || 1) < cur.slot) firstSlot.set(s2.room, { slot: Number(s2.slot) || 1, c });
-    }
-    const roomCat = new Map([...firstSlot].map(([room, v]) => [room, v.c]));
-    const busyVah = [...roomCat.values()].filter((c) => c === 'Вахтовый').length;
-    const busyItr = [...roomCat.values()].filter((c) => c === 'ИТР').length;
-
-    // Чья это половина гостиницы — считаем по жильцам блока.
-    const perBlock = new Map();
-    for (const [room, c] of roomCat) {
-      const b = blockOf(room);
+      const b = blockOf(s2.room);
       const t = perBlock.get(b) || { itr: 0, vah: 0 };
-      if (c === 'ИТР') t.itr++;
-      if (c === 'Вахтовый') t.vah++;
+      if (c === 'ИТР') t.itr++; else t.vah++;
       perBlock.set(b, t);
     }
     let freeVah = 0, freeItr = 0;
-    for (const n of freeRooms) {
-      const t = perBlock.get(blockOf(n)) || { itr: 0, vah: 0 };
-      if (t.itr > t.vah) freeItr++;
-      else if (t.vah > t.itr) freeVah++;
-      else { freeItr++; freeVah++; }   // блок пуст или смешанный — комната подойдёт обоим
+    for (const r of (seats || [])) {
+      const n = Math.max(0, (Number(r.seats) || 1) - (inRoom.get(r.room) || 0));
+      if (!n) continue;
+      const t = perBlock.get(blockOf(r.room)) || { itr: 0, vah: 0 };
+      if (t.itr > t.vah) freeItr += n;
+      else if (t.vah > t.itr) freeVah += n;
+      else { freeItr += n; freeVah += n; }   // блок пуст — место подойдёт обоим
     }
+
     // Гости по заявке — теперь с категорией, её указывают уже при подаче заявки.
     const wait = (bookings || []).filter((b) => b.status !== 'closed');
     const cnt = (t) => wait.filter((b) => stayTypeLabel(b.stayType) === t)
@@ -244,7 +245,7 @@ export default function ReportPage() {
     ];
     const head0 = rows.length;               // верхний этаж шапки
     rows.push(['№', 'вахтовики', '', '', '', 'ИТР', '', '',
-      'количество занятых номеров', '', 'количество свободных номеров', '',
+      'количество занятых мест', '', 'количество свободных мест', '',
       'количество гостей по заявке', '']);
     rows.push(['', 'дата и время заселения', 'ФИО', 'должность', 'подразделение',
       'дата и время заселения', 'ФИО', 'должность',
@@ -258,7 +259,7 @@ export default function ReportPage() {
         i + 1,
         v ? when(v) : '', v ? v.fio : '', v ? (v.position || '') : '', v ? (v.destination || '') : '',
         t ? when(t) : '', t ? t.fio : '', t ? (t.position || '') : '',
-        i === 0 ? busyVah : '', i === 0 ? busyItr : '',
+        i === 0 ? occVah : '', i === 0 ? occItr : '',
         i === 0 ? freeVah : '', i === 0 ? freeItr : '',
         i === 0 ? bookVah : '', i === 0 ? bookItr : '',
       ]);
@@ -422,7 +423,7 @@ export default function ReportPage() {
         </div>
 
         {/* --- Заявки на проживание от заказчика --- */}
-        <Requests list={bookings} onAdd={() => setReq(true)} />
+        <Requests list={bookings} onAdd={() => setReq(true)} onReload={render} />
 
         {/* --- Поиск и таблица --- */}
         <div className="card">
@@ -540,7 +541,7 @@ export default function ReportPage() {
    Заказчик сам сообщает, кого и куда ждёт. Это информация для ресепшна,
    а не бронь конкретной комнаты, поэтому поля необязательные и строгих
    проверок нет — кроме самого ФИО. */
-function Requests({ list, onAdd }) {
+function Requests({ list, onAdd, onReload }) {
   const today = todayStr();
   const rows = (list || []).filter((b) => b.status !== 'closed');
 
@@ -558,13 +559,14 @@ function Requests({ list, onAdd }) {
       {rows.length ? (
         <div style={{ marginTop: 10 }}>
           {rows.map((b) => (
-            <div key={b.id} className="list-item">
+            <div key={b.id} className="list-item" style={{ alignItems: 'flex-start' }}>
               <div className="avatar">{b.people > 1 ? b.people : '👤'}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600 }}>{b.fio || `${b.people} чел.`}</div>
+                {/* Категория прямо под именем: одно касание — и заявка попадает в счёт */}
+                <BookingType b={b} onSaved={onReload} />
                 <div className="small">
                   {fmt(b.date)}
-                  {stayTypeLabel(b.stayType) ? ` · ${stayTypeLabel(b.stayType)}` : ''}
                   {b.destination ? ` · ${b.destination}` : ''}
                   {b.date < today && <span style={{ color: 'var(--warnd)' }}> · дата прошла</span>}
                 </div>
@@ -573,6 +575,28 @@ function Requests({ list, onAdd }) {
           ))}
         </div>
       ) : <div className="small" style={{ marginTop: 8 }}>Активных заявок нет.</div>}
+    </div>
+  );
+}
+
+/* Переключатель категории у заявки: ИТР или в/а (вахта). Без него заявка
+   не попадает в колонки «количество гостей по заявке». */
+function BookingType({ b, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const cur = stayTypeLabel(b.stayType);
+  async function set(t) {
+    if (busy || cur === t) return;
+    setBusy(true);
+    try {
+      const r = await api('setBookingType', { id: b.id, stayType: t });
+      if (!r.ok) return alert(r.error || 'Ошибка');
+      await onSaved?.();
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="seg seg-sm" style={{ margin: '4px 0' }}>
+      <button className={cur === 'ИТР' ? 'on' : ''} disabled={busy} onClick={() => set('ИТР')}>ИТР</button>
+      <button className={cur === 'Вахтовый' ? 'on' : ''} disabled={busy} onClick={() => set('Вахтовый')}>в/а</button>
     </div>
   );
 }
