@@ -247,6 +247,9 @@ export default function ReportPage() {
       .reduce((a, b) => a + (Number(b.people) || 1), 0);
     const bookVah = cnt('Вахтовый');
     const bookItr = cnt('ИТР');
+    // Кого именно ждём — поимённо, отдельными столбцами.
+    const waitVah = wait.filter((b) => bookCat(b) === 'Вахтовый' && b.fio).map((b) => b.fio);
+    const waitItr = wait.filter((b) => bookCat(b) === 'ИТР' && b.fio).map((b) => b.fio);
 
     const sheet = [
       [HOTEL],
@@ -256,13 +259,13 @@ export default function ReportPage() {
     const head0 = sheet.length;               // верхний этаж шапки
     sheet.push(['№', 'вахтовики', '', '', '', 'ИТР', '', '',
       'количество занятых мест', '', 'количество свободных мест', '',
-      'количество гостей по заявке', '']);
+      'количество гостей по заявке', '', 'заявки · кого ждём (ФИО)', '']);
     sheet.push(['', 'дата и время заселения', 'ФИО', 'должность', 'подразделение',
       'дата и время заселения', 'ФИО', 'должность',
-      'в/а', 'ИТР', 'в/а', 'ИТР', 'в/а', 'ИТР']);
+      'в/а', 'ИТР', 'в/а', 'ИТР', 'в/а', 'ИТР', 'в/а', 'ИТР']);
 
     const firstData = sheet.length;
-    const n = Math.max(vah.length, itr.length, 1);
+    const n = Math.max(vah.length, itr.length, waitVah.length, waitItr.length, 1);
     for (let i = 0; i < n; i++) {
       const v = vah[i]; const t = itr[i];
       sheet.push([
@@ -272,6 +275,7 @@ export default function ReportPage() {
         i === 0 ? occVah : '', i === 0 ? occItr : '',
         i === 0 ? freeVah : '', i === 0 ? freeItr : '',
         i === 0 ? bookVah : '', i === 0 ? bookItr : '',
+        waitVah[i] || '', waitItr[i] || '',
       ]);
     }
     const lastData = sheet.length - 1;
@@ -300,8 +304,9 @@ export default function ReportPage() {
         `I${head0 + 1}:J${head0 + 1}`,      // занятых номеров
         `K${head0 + 1}:L${head0 + 1}`,      // свободных номеров
         `M${head0 + 1}:N${head0 + 1}`,      // гостей по заявке
+        `O${head0 + 1}:P${head0 + 1}`,      // кого ждём по заявкам — поимённо
       ],
-      widths: [5, 19, 28, 20, 20, 19, 28, 20, 9, 9, 9, 9, 9, 9],
+      widths: [5, 19, 28, 20, 20, 19, 28, 20, 9, 9, 9, 9, 9, 9, 26, 26],
     });
     } catch (e) {
       alert('Не удалось собрать файл: ' + (e?.message || e));
