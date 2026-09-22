@@ -5,7 +5,7 @@ import { TopBar, Busy, Modal } from '@/components/kit';
 import { useLive, liveLabel } from '@/lib/live';
 import { downloadXlsx } from '@/lib/xlsx';
 import { STAY_TYPES, stayTypeShort, stayTypeLabel, initials, fmt, timeHM, money, nightsNow, todayStr, nowTime, monthStart,
-         fmtDateTime, toAstanaISO, CITIZENSHIPS, POSITIONS,
+         fmtDateTime, toAstanaISO, CITIZENSHIPS, positionsOf,
          DEFAULT_COMPANY, PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          DEFAULT_GUARD_RATES, guardEarned, SHIFT_TYPES, defaultShiftType, shiftHours,
          shiftTypeLabel, shiftTypeOf, shortName,
@@ -181,7 +181,8 @@ export default function AdminPage() {
         {modal?.type === 'finEdit' && <FinEditModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'shiftEdit' && <ShiftEditModal row={modal.data} db={db} onClose={closeModal} onSaved={() => afterSave()} />}
         {modal?.type === 'booking' && <BookingModal row={modal.data} onClose={closeModal} onSaved={() => afterSave()} />}
-        {modal?.type === 'guest' && <GuestModal guest={modal.data} onClose={closeModal} onSaved={() => afterSave('guests')} />}
+        {modal?.type === 'guest' && <GuestModal guest={modal.data} positions={positionsOf(db.guests)}
+          onClose={closeModal} onSaved={() => afterSave('guests')} />}
         {modal?.type === 'staff' && <StaffModal worker={modal.data} onClose={closeModal} onSaved={() => afterSave('staff')} />}
         {modal?.type === 'cat' && <CatModal cat={modal.data} parentId={modal.parentId} ctype={modal.ctype} onClose={closeModal} onSaved={() => afterSave('cats')} />}
         {modal?.type === 'user' && <UserModal user={modal.data} onClose={closeModal} onSaved={async () => { closeModal(); await loadUsers(); }} />}
@@ -2085,17 +2086,19 @@ function CatsList({ db, setModal, onDelete }) {
 }
 
 /* ---- Settings modals ---- */
-function GuestModal({ guest, onClose, onSaved }) {
+function GuestModal({ guest, positions, onClose, onSaved }) {
   const edit = !!guest;
   const known = CITIZENSHIPS.includes(guest?.citizenship || '');
+  // Должности берём из уже заполненных анкет, а не из выдуманного списка.
+  const posList = positions && positions.length ? positions : ['Другое'];
   const [fio, setFio] = useState(guest?.fio || '');
   const [iin, setIin] = useState(guest?.iin || '');
   const [docNo, setDocNo] = useState(guest?.docNo || '');
   const [birth, setBirth] = useState(birthInput(guest?.birthYear || ''));
   const bornYearOnly = birthLegacyYear(guest?.birthYear || '');
   const [company, setCompany] = useState(guest?.company ?? DEFAULT_COMPANY);
-  const knownPos = POSITIONS.includes(guest?.position || '');
-  const [pos, setPos] = useState(guest?.position ? (knownPos ? guest.position : 'Другое') : 'Инженер');
+  const knownPos = posList.includes(guest?.position || '');
+  const [pos, setPos] = useState(guest?.position ? (knownPos ? guest.position : 'Другое') : posList[0]);
   const [posOther, setPosOther] = useState(guest?.position && !knownPos ? guest.position : '');
   const [destination, setDestination] = useState(guest?.destination || '');
   const [cit, setCit] = useState(guest?.citizenship ? (known ? guest.citizenship : 'Другое') : 'Казахстан');
@@ -2151,7 +2154,7 @@ function GuestModal({ guest, onClose, onSaved }) {
       <label>Компания / вахта</label><input value={company} onChange={(e) => setCompany(e.target.value)} />
       <label>Должность</label>
       <select value={pos} onChange={(e) => setPos(e.target.value)}>
-        {POSITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+        {posList.map((c) => <option key={c} value={c}>{c}</option>)}
       </select>
       {pos === 'Другое' && <input value={posOther} onChange={(e) => setPosOther(e.target.value)} placeholder="укажите должность" />}
       <label>Куда (объект / цех)</label>
