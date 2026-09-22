@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { api } from '@/lib/client';
 import { TopBar, Busy } from '@/components/kit';
 import { STAY_TYPES, stayTypeLabel, initials, fmt, todayStr, nowTime, nightsNow, fmtDateTime, toAstanaISO,
-         CITIZENSHIPS, DEFAULT_COMPANY, POSITIONS,
+         CITIZENSHIPS, DEFAULT_COMPANY, positionsOf,
          PHONE_PLACEHOLDER, formatPhone, cleanPhone, groupByBlock, blockOf,
          BIRTH_PLACEHOLDER, formatBirth, birthToISO, birthInput,
          birthLegacyYear, birthError } from '@/lib/ui';
@@ -75,16 +75,18 @@ function NameSearch({ items, getText, onPick, sub, placeholder, nothing }) {
 }
 
 // Анкета гостя: ФИО, ИИН, Компания, Гражданство, Телефон.
-function GuestForm({ init, title, onCancel, onDone }) {
+function GuestForm({ init, title, positions, onCancel, onDone }) {
   const known = CITIZENSHIPS.includes(init?.citizenship || '');
+  // Должности — те, что уже есть в базе; своей нет — вписывают через «Другое».
+  const posList = positions && positions.length ? positions : ['Другое'];
   const [fio, setFio] = useState(init?.fio || '');
   const [iin, setIin] = useState(init?.iin || '');
   const [docNo, setDocNo] = useState(init?.docNo || '');
   const [birth, setBirth] = useState(birthInput(init?.birthYear || ''));
   const bornYearOnly = birthLegacyYear(init?.birthYear || '');
   const [company, setCompany] = useState(init?.company ?? DEFAULT_COMPANY);
-  const knownPos = POSITIONS.includes(init?.position || '');
-  const [pos, setPos] = useState(init?.position ? (knownPos ? init.position : 'Другое') : 'Инженер');
+  const knownPos = posList.includes(init?.position || '');
+  const [pos, setPos] = useState(init?.position ? (knownPos ? init.position : 'Другое') : posList[0]);
   const [posOther, setPosOther] = useState(init?.position && !knownPos ? init.position : '');
   const [destination, setDestination] = useState(init?.destination || '');
   const [cit, setCit] = useState(init?.citizenship ? (known ? init.citizenship : 'Другое') : 'Казахстан');
@@ -153,7 +155,7 @@ function GuestForm({ init, title, onCancel, onDone }) {
 
       <label>Должность</label>
       <select value={pos} onChange={(e) => setPos(e.target.value)}>
-        {POSITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+        {posList.map((c) => <option key={c} value={c}>{c}</option>)}
       </select>
       {pos === 'Другое' && <input value={posOther} onChange={(e) => setPosOther(e.target.value)} placeholder="укажите должность" />}
 
@@ -400,6 +402,7 @@ export default function GuestPage() {
           <GuestForm
             title={formInit ? 'Дополните данные' : 'Регистрация'}
             init={formInit}
+            positions={positionsOf(guests)}
             onCancel={() => setScreen('in-choice')}
             onDone={afterForm}
           />
