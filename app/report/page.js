@@ -7,7 +7,8 @@ import { useLive, liveLabel } from '@/lib/live';
 import { fmt, fmtDateTime, timeHM, nightsNow, todayStr, groupByBlock, blockOf, formatPhone,
          STAY_TYPES, stayTypeLabel } from '@/lib/ui';
 import { fuzzyScore } from '@/lib/fuzzy';
-import { downloadXlsx } from '@/lib/xlsx';
+import { downloadXlsxBytes } from '@/lib/xlsx';
+import { buildReportForm } from '@/lib/reportForm';
 import { downloadPdf } from '@/lib/pdf';
 
 const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
@@ -189,125 +190,44 @@ export default function ReportPage() {
     return { rows: [[HOTEL], head, ...body], head };
   }
 
-  /* Excel — строго по бланку завода: одна таблица, где вахтовики и ИТР
-     стоят РЯДОМ, каждый в своих колонках, а справа три пары цифр (в/а · ИТР).
-     Шапка двухэтажная, поэтому верхние заголовки объединяем по ячейкам. */
+  /* Excel — бланк заказчика. Само оформление (шрифты, цвета, рамки,
+     ширина колонок) лежит в lib/reportForm.js: это его собственный файл,
+     мы только подставляем в него данные. */
   function exportExcel() {
-    const allStays = rows;           // все проживания: из них берём категории по ФИО
     try {
-    const cat = (s2) => stayTypeLabel(s2.stayType);
-    const vah = list.filter((s2) => cat(s2) === 'Вахтовый');
-    const itr = list.filter((s2) => cat(s2) === 'ИТР');
-    const rest = list.filter((s2) => !cat(s2));
-    const when = (s2) => (s2.arrivedAt ? fmtDateTime(s2.arrivedAt) : fmt(s2.arrival));
+      const when = (s2) => (s2.arrivedAt ? fmtDateTime(s2.arrivedAt) : fmt(s2.arrival));
+      const left = (s2) => (s2.departure
+        ? (s2.departedAt ? fmtDateTime(s2.departedAt) : fmt(s2.departure))
+        : '');
 
-    /* Категория комнаты видна по тому, кто в ней живёт. Свободная комната
-       берёт категорию своего блока: на деле блок 1 занят ИТР, блок 2 — вахтой,
-       и отдельно закреплять комнаты не нужно — система видит это сама. */
-    /* В бланке считаются МЕСТА, а не комнаты: в одной комнате может жить
-       двое, и по комнатам цифры не сходились. Место занято тем, кто в нём
-       живёт, — категория берётся прямо из его анкеты. */
-    const occVah = active.filter((s2) => cat(s2) === 'Вахтовый').length;
-    const occItr = active.filter((s2) => cat(s2) === 'ИТР').length;
+      /* Кого ждём по заявкам — поимённо. Категорию берём: из самой заявки,
+         иначе из анкеты, если человек у нас уже жил, иначе считаем вахтой. */
+      const cat = (s2) => stayTypeLabel(s2.stayType);
+      const nm = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const nameCat = new Map();
+      for (const s2 of rows) { const c = cat(s2); if (c && s2.fio) nameCat.set(nm(s2.fio), c); }
+      const wait = (bookings || []).filter((b) => b.status !== 'closed' && b.fio);
+      const bookCat = (b) => stayTypeLabel(b.stayType) || nameCat.get(nm(b.fio)) || 'Вахтовый';
 
-    /* Свободное место относим к своему блоку: блок 1 занят ИТР, блок 2 —
-       вахтой, система видит это по жильцам и закреплять ничего не нужно. */
-    const perBlock = new Map();
-    const inRoom = new Map();
-    for (const s2 of active) {
-      inRoom.set(s2.room, (inRoom.get(s2.room) || 0) + 1);
-      const c = cat(s2);
-      if (!c) continue;
-      const b = blockOf(s2.room);
-      const t = perBlock.get(b) || { itr: 0, vah: 0 };
-      if (c === 'ИТР') t.itr++; else t.vah++;
-      perBlock.set(b, t);
-    }
-    let freeVah = 0, freeItr = 0;
-    for (const r of (seats || [])) {
-      const n = Math.max(0, (Number(r.seats) || 1) - (inRoom.get(r.room) || 0));
-      if (!n) continue;
-      const t = perBlock.get(blockOf(r.room)) || { itr: 0, vah: 0 };
-      if (t.itr > t.vah) freeItr += n;
-      else if (t.vah > t.itr) freeVah += n;
-      else { freeItr += n; freeVah += n; }   // блок пуст — место подойдёт обоим
-    }
+      const people = (arr) => arr.reduce((a, b) => a + (Number(b.people) || 1), 0);
+      const itrWait = wait.filter((b) => bookCat(b) === 'ИТР');
+      const vahWait = wait.filter((b) => bookCat(b) === 'Вахтовый');
 
-    /* Гости по заявке считаются прямо из списка заявок — ничего отмечать
-       вручную не нужно. Категорию берём: 1) из самой заявки, 2) из анкеты,
-       если этот человек у нас уже жил, 3) иначе считаем вахтовым — основной
-       поток, и одно нажатие в списке заявок переключает на ИТР. */
-    const nm = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    const nameCat = new Map();
-    for (const s2 of allStays) { const c = cat(s2); if (c && s2.fio) nameCat.set(nm(s2.fio), c); }
-    const bookCat = (b) => stayTypeLabel(b.stayType) || nameCat.get(nm(b.fio)) || 'Вахтовый';
-
-    const wait = (bookings || []).filter((b) => b.status !== 'closed');
-    const cnt = (t) => wait.filter((b) => bookCat(b) === t)
-      .reduce((a, b) => a + (Number(b.people) || 1), 0);
-    const bookVah = cnt('Вахтовый');
-    const bookItr = cnt('ИТР');
-    // Кого именно ждём — поимённо, отдельными столбцами.
-    const waitVah = wait.filter((b) => bookCat(b) === 'Вахтовый' && b.fio).map((b) => b.fio);
-    const waitItr = wait.filter((b) => bookCat(b) === 'ИТР' && b.fio).map((b) => b.fio);
-
-    const sheet = [
-      [HOTEL],
-      [`Отчёт о проживании · ${period}`],
-      [],
-    ];
-    const head0 = sheet.length;               // верхний этаж шапки
-    sheet.push(['№', 'вахтовики', '', '', '', 'ИТР', '', '',
-      'количество занятых мест', '', 'количество свободных мест', '',
-      'количество гостей по заявке', '', 'заявки · кого ждём (ФИО)', '']);
-    sheet.push(['', 'дата и время заселения', 'ФИО', 'должность', 'подразделение',
-      'дата и время заселения', 'ФИО', 'должность',
-      'в/а', 'ИТР', 'в/а', 'ИТР', 'в/а', 'ИТР', 'в/а', 'ИТР']);
-
-    const firstData = sheet.length;
-    const n = Math.max(vah.length, itr.length, waitVah.length, waitItr.length, 1);
-    for (let i = 0; i < n; i++) {
-      const v = vah[i]; const t = itr[i];
-      sheet.push([
-        i + 1,
-        v ? when(v) : '', v ? v.fio : '', v ? (v.position || '') : '', v ? (v.destination || '') : '',
-        t ? when(t) : '', t ? t.fio : '', t ? (t.position || '') : '',
-        i === 0 ? occVah : '', i === 0 ? occItr : '',
-        i === 0 ? freeVah : '', i === 0 ? freeItr : '',
-        i === 0 ? bookVah : '', i === 0 ? bookItr : '',
-        waitVah[i] || '', waitItr[i] || '',
-      ]);
-    }
-    const lastData = sheet.length - 1;
-
-    // Записи без категории не теряем — выносим отдельным списком под таблицей.
-    const tail = [];
-    if (rest.length) {
-      sheet.push([]);
-      tail.push(sheet.length);
-      sheet.push([`Без категории — ${rest.length} чел. (проставьте ИТР или Вахтовый в анкете)`]);
-      rest.forEach((s2, i) => sheet.push([i + 1, when(s2), s2.fio, s2.position || '', s2.destination || '']));
-    }
-
-    const gridRows = [];
-    for (let r = firstData; r <= lastData; r++) gridRows.push(r);
-
-    downloadXlsx(`MEDINA_${effFrom}_${effTo}.xlsx`, sheet, {
-      sheetName: 'Отчёт',
-      boldRows: [0, 1, ...tail],
-      headRows: [head0, head0 + 1],
-      gridRows,
-      merges: [
-        `A${head0 + 1}:A${head0 + 2}`,      // № — на два этажа
-        `B${head0 + 1}:E${head0 + 1}`,      // вахтовики
-        `F${head0 + 1}:H${head0 + 1}`,      // ИТР
-        `I${head0 + 1}:J${head0 + 1}`,      // занятых номеров
-        `K${head0 + 1}:L${head0 + 1}`,      // свободных номеров
-        `M${head0 + 1}:N${head0 + 1}`,      // гостей по заявке
-        `O${head0 + 1}:P${head0 + 1}`,      // кого ждём по заявкам — поимённо
-      ],
-      widths: [5, 19, 28, 20, 20, 19, 28, 20, 9, 9, 9, 9, 9, 9, 26, 26],
-    });
+      const bytes = buildReportForm({
+        hotel: HOTEL,
+        occRooms: busyRooms.size,
+        freeRooms: freeRooms.length,
+        bookGuests: (bookings || []).filter((b) => b.status !== 'closed')
+          .reduce((a, b) => a + (Number(b.people) || 1), 0),
+        nItr: people(itrWait),
+        nVah: people(vahWait),
+        list: list.map((s2) => ({
+          arrival: when(s2), departure: left(s2), fio: s2.fio, position: s2.position || '',
+        })),
+        waitItr: itrWait.map((b) => b.fio),
+        waitVah: vahWait.map((b) => b.fio),
+      });
+      downloadXlsxBytes(`MEDINA_${effFrom}_${effTo}.xlsx`, bytes);
     } catch (e) {
       alert('Не удалось собрать файл: ' + (e?.message || e));
     }
