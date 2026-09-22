@@ -215,6 +215,8 @@ export default function ReportPage() {
 
       const bytes = buildReportForm({
         hotel: HOTEL,
+        // В файле пишем, какой именно список выгружен — как выбрано на экране.
+        status: who === 'living' ? 'ПРОЖИВАЮТ' : who === 'left' ? 'ВЫЕХАЛИ' : 'ВСЕ',
         occRooms: busyRooms.size,
         freeRooms: freeRooms.length,
         bookGuests: (bookings || []).filter((b) => b.status !== 'closed')
