@@ -223,9 +223,19 @@ export default function ReportPage() {
           .reduce((a, b) => a + (Number(b.people) || 1), 0),
         nItr: people(itrWait),
         nVah: people(vahWait),
-        list: list.map((s2) => ({
-          arrival: when(s2), departure: left(s2), fio: s2.fio, position: s2.position || '',
-        })),
+        /* В файле сначала идут ИТР, потом вахта, в конце — без категории.
+           Внутри группы порядок остаётся хронологическим, как на экране. */
+        list: list
+          .map((s2, i) => ({ s2, i, c: cat(s2) }))
+          .sort((a, b) => {
+            const w = (c) => (c === 'ИТР' ? 0 : c === 'Вахтовый' ? 1 : 2);
+            return w(a.c) - w(b.c) || a.i - b.i;
+          })
+          .map(({ s2, c }) => ({
+            arrival: when(s2), departure: left(s2),
+            category: c === 'ИТР' ? 'итр' : c === 'Вахтовый' ? 'вахта' : '',
+            fio: s2.fio, position: s2.position || '',
+          })),
         waitItr: itrWait.map((b) => b.fio),
         waitVah: vahWait.map((b) => b.fio),
       });
