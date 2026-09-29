@@ -213,8 +213,14 @@ export default function ReportPage() {
       const itrWait = wait.filter((b) => bookCat(b) === 'ИТР');
       const vahWait = wait.filter((b) => bookCat(b) === 'Вахтовый');
 
+      // Сколько человек в выгружаемом списке — всего и по категориям.
+      const inList = (t) => list.filter((s2) => cat(s2) === t).length;
+
       const bytes = buildReportForm({
         hotel: HOTEL,
+        total: list.length,
+        tItr: inList('ИТР'),
+        tVah: inList('Вахтовый'),
         // В файле пишем, какой именно список выгружен — как выбрано на экране.
         status: who === 'living' ? 'ПРОЖИВАЮТ' : who === 'left' ? 'ВЫЕХАЛИ' : 'ВСЕ',
         occRooms: busyRooms.size,
