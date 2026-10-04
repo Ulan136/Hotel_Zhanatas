@@ -909,31 +909,45 @@ function guardRates(settings) {
 /* Сколько мы должны сотруднику. Начисление есть только у охраны (по сменам),
    выплатой считается и старая запись в «выплатах», и расход по статье
    «Зарплата › ФИО» — платим теперь через расходы, поэтому учитываем оба. */
-function staffMoney(db, fio) {
+function staffMoney(db, fio, month = '') {
   const name = String(fio || '').trim();
   const rates = guardRates(db?.settings);
-  const shifts = (db?.shifts || []).filter((x) => x.role === 'Охрана' && x.fio === name);
-  const isGuard = shifts.length > 0
+  const mon = String(month || '').slice(0, 7);
+  const allShifts = (db?.shifts || []).filter((x) => x.role === 'Охрана' && x.fio === name);
+  const isGuard = allShifts.length > 0
     || (db?.staff || []).some((x) => x.fio === name && x.role === 'Охрана');
-  const e = guardEarned(shifts, rates);
 
-  /* С какого месяца ведём расчёт: с первой смены этого человека в журнале.
-     Зарплата за более ранние месяцы (например, за август) уже выплачена и
-     долг за сентябрь не гасит — иначе выходила бы ложная переплата. */
-  const from = shifts.map((x) => String(x.date || '').slice(0, 7)).sort()[0] || '';
   const sal = (db?.finance || []).filter((f) =>
     f.type === 'expense' && isSalaryCat(f.category) && String(f.subcategory || '').trim() === name);
-  const inPeriod = (f) => {
-    const m = String(f.payMonth || '').slice(0, 7) || String(f.date || '').slice(0, 7);
-    return !from || m >= from;
-  };
-  const paidOld = (db?.payments || [])
-    .filter((p) => p.fio === name && (!from || String(p.date || '').slice(0, 7) >= from))
-    .reduce((a, p) => a + (+p.amount || 0), 0);
-  const paidFin = sal.filter(inPeriod).reduce((a, f) => a + (+f.amount || 0), 0);
-  const closed = sal.filter((f) => !inPeriod(f)).reduce((a, f) => a + (+f.amount || 0), 0);
+  const monthOf = (f) => String(f.payMonth || '').slice(0, 7) || String(f.date || '').slice(0, 7);
+  const sum = (arr, k = 'amount') => arr.reduce((a, x) => a + (+x[k] || 0), 0);
+
+  /* Выбран месяц (например «Сентябрь») — считаем ТОЛЬКО его: смены этого
+     месяца и выплаты, помеченные этим же месяцем. Октябрьские смены сюда
+     не попадают, а выплаты за другие месяцы сентябрьский долг не гасят. */
+  if (mon) {
+    const e = guardEarned(allShifts.filter((x) => String(x.date || '').slice(0, 7) === mon), rates);
+    const paidFin = sum(sal.filter((f) => monthOf(f) === mon));
+    const paidOld = sum((db?.payments || [])
+      .filter((p) => p.fio === name && String(p.date || '').slice(0, 7) === mon));
+    const paid = paidFin + paidOld;
+    const closed = sum(sal.filter((f) => monthOf(f) !== mon));
+    return { isGuard, month: mon, from: mon, days: e.days, night: e.night, day: e.day,
+             earned: e.amount, paid, closed, debt: e.amount - paid };
+  }
+
+  /* Без выбора месяца — за всё время, с первой смены этого человека в журнале.
+     Зарплата за более ранние месяцы (например, за август) уже выплачена и
+     долг за сентябрь не гасит — иначе выходила бы ложная переплата. */
+  const e = guardEarned(allShifts, rates);
+  const from = allShifts.map((x) => String(x.date || '').slice(0, 7)).sort()[0] || '';
+  const inPeriod = (f) => !from || monthOf(f) >= from;
+  const paidOld = sum((db?.payments || [])
+    .filter((p) => p.fio === name && (!from || String(p.date || '').slice(0, 7) >= from)));
+  const paidFin = sum(sal.filter(inPeriod));
+  const closed = sum(sal.filter((f) => !inPeriod(f)));
   const paid = paidOld + paidFin;
-  return { isGuard, from, days: e.days, night: e.night, day: e.day,
+  return { isGuard, month: '', from, days: e.days, night: e.night, day: e.day,
            earned: e.amount, paid, closed, debt: e.amount - paid };
 }
 
@@ -1473,7 +1487,8 @@ function FinModal({ db, cats, staff, onClose, onSaved, onNeedCats }) {
   const workers = (staff || []).map((x) => x.fio).filter(Boolean).sort((a, b) => a.localeCompare(b));
   const subs = cat ? subCats(cats, cat) : [];
   // Долг выбранному сотруднику — чтобы не искать сумму в другом разделе.
-  const owe = salary && sub ? staffMoney(db, sub) : null;
+  // Долг за ВЫБРАННЫЙ месяц — смены других месяцев в расчёт не берём.
+  const owe = salary && sub ? staffMoney(db, sub, payMonth) : null;
   useEffect(() => { setCat(tops[0]?.id ?? ''); setSub(''); /* eslint-disable-next-line */ }, [type]);
   useEffect(() => { setSub(''); }, [cat]);
 
@@ -1528,24 +1543,29 @@ function FinModal({ db, cats, staff, onClose, onSaved, onNeedCats }) {
             {lastMonths(8).map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
           </select>
           <div className="small" style={{ marginTop: 4 }}>
-            За какой месяц работы платим. Долг ниже считается только за месяцы, где есть смены.
+            За какой месяц работы платим. Долг ниже считается <b>только за этот месяц</b> —
+            смены других месяцев в расчёт не входят.
           </div>
 
           {owe && (
             <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: 'var(--eef)' }}>
               {owe.isGuard ? (
                 <>
-                  <div className="small" style={{ color: 'var(--primd)' }}>
+                  <div className="small" style={{ fontWeight: 700, color: 'var(--primd)' }}>
+                    Расчёт за {monthName(payMonth)}
+                  </div>
+                  <div className="small" style={{ color: 'var(--primd)', marginTop: 2 }}>
                     {owe.days} смен ({owe.night} ноч. + {owe.day} дневн.) ·
                     начислено <b>{money(owe.earned)}</b>
                   </div>
                   <div className="small" style={{ color: 'var(--primd)', marginTop: 2 }}>
                     выплачено <b>{money(owe.paid)}</b>
-                    {owe.closed > 0 && <> · за прошлые месяцы {money(owe.closed)} (в расчёт не входит)</>}
+                    {owe.closed > 0 && <> · за другие месяцы {money(owe.closed)} (в расчёт не входит)</>}
                   </div>
                   <div style={{ marginTop: 6, fontWeight: 800, fontSize: 16,
                                 color: owe.debt > 0 ? 'var(--expd)' : 'var(--incd)' }}>
-                    {owe.debt > 0 ? `Должны ${money(owe.debt)}` :
+                    {owe.days === 0 ? `За ${monthName(payMonth)} смен нет` :
+                     owe.debt > 0 ? `Должны ${money(owe.debt)}` :
                      owe.debt < 0 ? `Переплата ${money(-owe.debt)}` : 'Долгов нет'}
                   </div>
                   {owe.debt > 0 && (
@@ -1555,7 +1575,7 @@ function FinModal({ db, cats, staff, onClose, onSaved, onNeedCats }) {
                 </>
               ) : (
                 <div className="small" style={{ color: 'var(--primd)' }}>
-                  Смены не ведём — выплачено за всё время <b>{money(money.paid)}</b>.
+                  Смены не ведём — за {monthName(payMonth)} выплачено <b>{money(owe.paid)}</b>.
                 </div>
               )}
             </div>
