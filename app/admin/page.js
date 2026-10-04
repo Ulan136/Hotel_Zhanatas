@@ -52,7 +52,22 @@ export default function AdminPage() {
 
   async function boot() {
     const s = getSess();
-    if (s) { setSess(s); return openApp(s); }
+    if (s) {
+      /* В браузере записано, под кем мы вошли, но настоящий вход хранится в
+         серверной куке. Они могут разойтись: например, в этом же браузере
+         потом зашли как «Заказчик» — тогда кука стала заказчика, а страница
+         всё ещё думает, что она админ, и кабинет молча не грузился.
+         Поэтому сперва спрашиваем сервер, кто мы на самом деле. */
+      let real = null;
+      try { real = (await withBusy(() => api('me')))?.user || null; } catch {}
+      if (real && (real.role === 'admin' || real.role === 'reception')) {
+        const fresh = { name: real.name, login: real.login, role: real.role };
+        saveSess(fresh, true); setSess(fresh); return openApp(fresh);
+      }
+      clearSess(); setSess(null); setView('login');
+      if (real) alert(`Сейчас вы вошли как «${real.name || real.login}» — это доступ заказчика, кабинет ему не открывается. Войдите под админом или ресепшн.`);
+      return;
+    }
     try {
       const h = await withBusy(() => api('hasAdmin'));
       setView(h.hasAdmin ? 'login' : 'reg');
@@ -60,7 +75,16 @@ export default function AdminPage() {
   }
   async function openApp(s) {
     try { await withBusy(reload); setView('app'); }
-    catch { alert('Нет связи с базой.'); }
+    catch (e) {
+      const msg = String(e?.message || '');
+      setView('login');
+      if (/прав|Сессия/i.test(msg)) {
+        clearSess(); setSess(null);
+        alert('Этот вход не открывает кабинет: ' + msg + '. Войдите под админом или ресепшн.');
+      } else {
+        alert('Нет связи с базой. ' + msg);
+      }
+    }
   }
   function logout(forget) {
     api('logout').catch(() => {});
