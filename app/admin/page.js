@@ -1898,16 +1898,196 @@ function ReportTab({ db }) {
   );
 }
 
+/* ===================== Отчёты: «выдали» и «начислено» =====================
+   Два разных числа, которые раньше путались:
+   • ВЫДАЛИ — сколько денег реально отдали человеку за период (расходы по дате).
+   • НАЧИСЛЕНО — сколько человек наработал за период (смены по дате смены).
+   Разница = долг (или переплата) за этот период. */
+function monthRange(offset = 0) {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offset);
+  const y = d.getFullYear(), m = d.getMonth();
+  const p = (n) => String(n).padStart(2, '0');
+  const last = new Date(y, m + 1, 0).getDate();
+  return { from: `${y}-${p(m + 1)}-01`, to: `${y}-${p(m + 1)}-${p(last)}`, key: `${y}-${p(m + 1)}` };
+}
+
+function PayReport({ db }) {
+  const cur = monthRange(0), prev = monthRange(-1);
+  const [period, setPeriod] = useState('cur');
+  const [from, setFrom] = useState(cur.from);
+  const [to, setTo] = useState(todayStr());
+  const [mode, setMode] = useState('both');
+
+  const range = period === 'cur' ? cur : period === 'prev' ? prev : { from, to };
+  const inRange = (d) => {
+    const x = String(d || '').slice(0, 10);
+    if (!x) return false;
+    return (!range.from || x >= range.from) && (!range.to || x <= range.to);
+  };
+  const title = period === 'cur' ? monthName(cur.key)
+    : period === 'prev' ? monthName(prev.key)
+    : `${range.from ? fmt(range.from) : 'начало'} – ${range.to ? fmt(range.to) : 'сегодня'}`;
+
+  const rates = guardRates(db.settings);
+  const isSal = (f) => f.type === 'expense' && isSalaryCat(f.category) && String(f.subcategory || '').trim();
+
+  const names = new Set();
+  (db.staff || []).forEach((x) => x.fio && names.add(x.fio));
+  (db.shifts || []).forEach((x) => x.fio && names.add(x.fio));
+  (db.payments || []).forEach((p) => p.fio && names.add(p.fio));
+  (db.finance || []).forEach((f) => { if (isSal(f)) names.add(String(f.subcategory).trim()); });
+
+  const all = [...names].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ru')).map((fio) => {
+    const sh = (db.shifts || []).filter((x) => x.fio === fio && x.role === 'Охрана' && inRange(x.date));
+    const e = guardEarned(sh, rates);
+    const pays = (db.finance || []).filter((f) => isSal(f) && String(f.subcategory).trim() === fio && inRange(f.date));
+    const old = (db.payments || []).filter((p) => p.fio === fio && inRange(p.date));
+    const paid = pays.reduce((a, f) => a + (+f.amount || 0), 0)
+      + old.reduce((a, p) => a + (+p.amount || 0), 0);
+    return { fio, days: e.days, night: e.night, day: e.day, earned: e.amount, paid, pays, old };
+  }).filter((r) => r.earned > 0 || r.paid > 0);
+
+  const rows = mode === 'paid' ? all.filter((r) => r.paid > 0)
+    : mode === 'earned' ? all.filter((r) => r.earned > 0) : all;
+  const tEarned = rows.reduce((a, r) => a + r.earned, 0);
+  const tPaid = rows.reduce((a, r) => a + r.paid, 0);
+
+  // Журнал выдач за период — чтобы видеть каждую выплату отдельно.
+  const log = [];
+  for (const r of all) {
+    for (const f of r.pays) log.push({ date: f.date, fio: r.fio, amount: +f.amount || 0,
+      forMonth: String(f.payMonth || '').slice(0, 7), note: f.note || '' });
+    for (const p of r.old) log.push({ date: p.date, fio: r.fio, amount: +p.amount || 0,
+      forMonth: '', note: p.note || '' });
+  }
+  log.sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.fio.localeCompare(b.fio, 'ru'));
+
+  const seg = (v, label) => (
+    <button key={v} className={'btn ' + (mode === v ? '' : 'sec')}
+      style={{ flex: '1 1 30%', margin: 0, padding: '8px 4px', fontSize: 13, minWidth: 92 }}
+      onClick={() => setMode(v)}>{label}</button>
+  );
+  const per = (v, label) => (
+    <button key={v} className={'btn ' + (period === v ? '' : 'sec')}
+      style={{ flex: '1 1 30%', margin: 0, padding: '8px 4px', fontSize: 13, minWidth: 92 }}
+      onClick={() => setPeriod(v)}>{label}</button>
+  );
+
+  return (
+    <>
+      <div className="card noprint">
+        <h2 style={{ fontSize: 15 }}>Отчёты по зарплате</h2>
+        <div className="small">
+          <b>Выдали</b> — сколько денег реально отдали за период. <b>Начислено</b> — сколько
+          человек наработал за этот же период по сменам. Это разные числа.
+        </div>
+
+        <label>Период</label>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {per('prev', 'Прошлый месяц')}{per('cur', 'Текущий месяц')}{per('custom', 'Свои даты')}
+        </div>
+        {period === 'custom' && (
+          <div className="two" style={{ marginTop: 8 }}>
+            <div><label>с</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
+            <div><label>по</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+          </div>
+        )}
+
+        <label>Показать</label>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {seg('both', 'Обе колонки')}{seg('paid', 'Только выдали')}{seg('earned', 'Только начислено')}
+        </div>
+
+        <button className="btn sec" style={{ marginTop: 10 }} onClick={() => window.print()}>🖨 Печать / PDF</button>
+      </div>
+
+      <div className="card">
+        <div style={{ fontWeight: 700 }}>{title}</div>
+        <div className="small" style={{ marginBottom: 8 }}>
+          {mode !== 'paid' && <>Начислено за период: <b>{money(tEarned)}</b></>}
+          {mode === 'both' && ' · '}
+          {mode !== 'earned' && <>Выдали за период: <b>{money(tPaid)}</b></>}
+          {mode === 'both' && <> · разница: <b style={{ color: tEarned - tPaid > 0 ? 'var(--expd)' : 'var(--incd)' }}>{money(tEarned - tPaid)}</b></>}
+        </div>
+        {rows.length ? (
+          <div style={{ overflow: 'auto' }}>
+            <table><tbody>
+              <tr>
+                <th>Сотрудник</th>
+                {mode !== 'paid' && <th style={{ textAlign: 'right' }}>Смен</th>}
+                {mode !== 'paid' && <th style={{ textAlign: 'right' }}>Начислено</th>}
+                {mode !== 'earned' && <th style={{ textAlign: 'right' }}>Выдали</th>}
+                {mode === 'both' && <th style={{ textAlign: 'right' }}>Разница</th>}
+              </tr>
+              {rows.map((r) => (
+                <tr key={r.fio}>
+                  <td style={{ fontWeight: 600 }}>{r.fio}</td>
+                  {mode !== 'paid' && <td style={{ textAlign: 'right' }}>{r.days || '—'}</td>}
+                  {mode !== 'paid' && <td style={{ textAlign: 'right' }}>{money(r.earned)}</td>}
+                  {mode !== 'earned' && <td style={{ textAlign: 'right', color: 'var(--expd)' }}>{money(r.paid)}</td>}
+                  {mode === 'both' && (
+                    <td style={{ textAlign: 'right', fontWeight: 700,
+                                 color: r.earned - r.paid > 0 ? 'var(--expd)' : 'var(--incd)' }}>
+                      {money(r.earned - r.paid)}
+                    </td>
+                  )}
+                </tr>
+              ))}
+              <tr style={{ background: 'var(--panel)' }}>
+                <td style={{ fontWeight: 700 }}>Итого</td>
+                {mode !== 'paid' && <td />}
+                {mode !== 'paid' && <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(tEarned)}</td>}
+                {mode !== 'earned' && <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--expd)' }}>{money(tPaid)}</td>}
+                {mode === 'both' && <td style={{ textAlign: 'right', fontWeight: 800 }}>{money(tEarned - tPaid)}</td>}
+              </tr>
+            </tbody></table>
+          </div>
+        ) : <div className="small">За этот период ни выдач, ни смен нет.</div>}
+        {mode === 'both' && (
+          <div className="small" style={{ marginTop: 8 }}>
+            Разница больше нуля — столько ещё должны за период; меньше нуля — выдали вперёд.
+          </div>
+        )}
+      </div>
+
+      {mode !== 'earned' && (
+        <div className="card">
+          <h2 style={{ fontSize: 15 }}>Журнал выдач за период</h2>
+          <div className="small">Каждая выплата отдельно — по дате, когда деньги отдали.</div>
+          {log.length ? (
+            <div style={{ overflow: 'auto', marginTop: 8 }}>
+              <table><tbody>
+                <tr><th>Дата</th><th>Кому</th><th style={{ textAlign: 'right' }}>Сумма</th><th>За месяц</th><th>Комментарий</th></tr>
+                {log.map((x, i) => (
+                  <tr key={i}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{fmt(x.date)}</td>
+                    <td style={{ fontWeight: 600 }}>{x.fio}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--expd)' }}>{money(x.amount)}</td>
+                    <td>{x.forMonth ? monthName(x.forMonth) : '—'}</td>
+                    <td>{x.note}</td>
+                  </tr>
+                ))}
+              </tbody></table>
+            </div>
+          ) : <div className="small" style={{ marginTop: 8 }}>Выдач за период нет.</div>}
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ===================== Админ-учёт (все отчёты) ===================== */
 function Uchet({ db, backToApp, onPay, onEditPayment, onDelPayment, onEditFin, onDelFin, onEditShift, onDelShift, onReload }) {
   const [seg, setSeg] = useState('stay');
-  const segs = [['stay', '🏨 Проживание'], ['fin', '₸ Финансы'], ['shifts', '🕒 Смены']];
+  const segs = [['stay', '🏨 Проживание'], ['fin', '₸ Финансы'], ['shifts', '🕒 Смены'], ['pay', '📑 Отчёты']];
   return (
     <>
       <div className="card">
         <button className="link" style={{ marginBottom: 8 }} onClick={backToApp}>← назад в кабинет</button>
         <h2>📊 Админ-учёт</h2>
-        <div className="small">Все отчёты гостиницы в одном месте: проживание вахты, финансы и табель смен.</div>
+        <div className="small">Все отчёты гостиницы в одном месте: проживание вахты, финансы, табель смен и зарплата (сколько выдали / сколько начислено).</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
           {segs.map((s) => (
             <button key={s[0]} className={'btn ' + (seg === s[0] ? '' : 'sec')} style={{ flex: '1 1 30%', margin: 0, padding: '9px 4px', fontSize: 13, minWidth: 96 }} onClick={() => setSeg(s[0])}>{s[1]}</button>
@@ -1920,6 +2100,7 @@ function Uchet({ db, backToApp, onPay, onEditPayment, onDelPayment, onEditFin, o
       {seg === 'shifts' && <ShiftsReport db={db} onPay={onPay} onEditPayment={onEditPayment}
                              onDelPayment={onDelPayment} onEditShift={onEditShift} onDelShift={onDelShift}
                              onReload={onReload} />}
+      {seg === 'pay' && <PayReport db={db} />}
 
     </>
   );
