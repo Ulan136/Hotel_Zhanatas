@@ -39,6 +39,8 @@ export default function AdminPage() {
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState(null);
+  // Причина, по которой показали вход (пишем прямо на странице, без всплывающих окон).
+  const [notice, setNotice] = useState('');
 
   useEffect(() => { boot(); }, []);
 
@@ -65,24 +67,26 @@ export default function AdminPage() {
         saveSess(fresh, true); setSess(fresh); return openApp(fresh);
       }
       clearSess(); setSess(null); setView('login');
-      if (real) alert(`Сейчас вы вошли как «${real.name || real.login}» — это доступ заказчика, кабинет ему не открывается. Войдите под админом или ресепшн.`);
+      setNotice(real
+        ? `В этом браузере открыт вход «${real.name || real.login}» — это доступ заказчика, кабинет ему не открывается. Войдите под админом или ресепшн.`
+        : 'Вход устарел — войдите заново.');
       return;
     }
     try {
       const h = await withBusy(() => api('hasAdmin'));
       setView(h.hasAdmin ? 'login' : 'reg');
-    } catch { setView('login'); alert('Нет связи с базой. Проверьте DATABASE_URL.'); }
+    } catch { setView('login'); setNotice('Нет связи с базой. Проверьте DATABASE_URL.'); }
   }
   async function openApp(s) {
-    try { await withBusy(reload); setView('app'); }
+    try { await withBusy(reload); setView('app'); setNotice(''); }
     catch (e) {
       const msg = String(e?.message || '');
       setView('login');
       if (/прав|Сессия/i.test(msg)) {
         clearSess(); setSess(null);
-        alert('Этот вход не открывает кабинет: ' + msg + '. Войдите под админом или ресепшн.');
+        setNotice('Этот вход не открывает кабинет: ' + msg + '. Войдите под админом или ресепшн.');
       } else {
-        alert('Нет связи с базой. ' + msg);
+        setNotice('Нет связи с базой. ' + msg);
       }
     }
   }
@@ -119,6 +123,12 @@ export default function AdminPage() {
 
   if (view === 'login') return (
     <Frame sub="вход">
+      {notice && (
+        <div className="small" style={{ background: 'var(--partbg)', color: 'var(--warnd)',
+                                        padding: '10px 12px', borderRadius: 10, marginBottom: 10 }}>
+          {notice}
+        </div>
+      )}
       <LoginForm
         onDone={(s, remember) => { saveSess(s, remember); setSess(s); openApp(s); }}
         setBusy={setBusy}
